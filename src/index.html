@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: lumina-media:; media-src 'self' lumina-media:; connect-src 'self' lumina-media:; style-src 'self'; script-src 'self';"
+    />
+    <title>Lumina Gallery</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="titlebar">
+        <div class="brand" aria-label="Lumina Gallery">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 7.5A3.5 3.5 0 0 1 7.5 4h9A3.5 3.5 0 0 1 20 7.5v9a3.5 3.5 0 0 1-3.5 3.5h-9A3.5 3.5 0 0 1 4 16.5v-9Z"/><circle cx="15.5" cy="8.5" r="1.5"/><path d="m5 16 4.2-4.3a1.4 1.4 0 0 1 2 0l1.8 1.8 1-1a1.4 1.4 0 0 1 2 0l3 3"/></svg>
+          </div>
+          <div>
+            <div class="brand-name">Lumina</div>
+            <div class="brand-subtitle">Фото и видео</div>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="button primary" id="open-folder-button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/></svg>
+            Открыть папку
+          </button>
+          <button class="icon-button" id="settings-button" title="Настройки оформления" aria-label="Открыть настройки">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.13.4.34.75.6 1 .3.27.67.4 1.1.4h.1v4h-.1a1.7 1.7 0 0 0-1.7.6Z"/></svg>
+          </button>
+          <button class="icon-button panel-toggle" id="left-panel-toggle" title="Скрыть дерево папок" aria-label="Скрыть дерево папок">
+            <svg viewBox="0 0 24 24"><path d="m14 7-5 5 5 5"/></svg>
+          </button>
+          <button class="icon-button panel-toggle" id="right-panel-toggle" title="Скрыть предпросмотр" aria-label="Скрыть предпросмотр">
+            <svg viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace" id="workspace">
+        <aside class="panel sidebar" id="left-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="eyebrow">Библиотека</div>
+              <h2 id="root-title">Папки</h2>
+            </div>
+            <button class="icon-button inner-collapse" id="left-collapse" aria-label="Свернуть левую панель" title="Свернуть">
+              <svg viewBox="0 0 24 24"><path d="m14 7-5 5 5 5"/></svg>
+            </button>
+          </div>
+          <div class="tree-scroll" id="tree-container">
+            <div class="panel-placeholder compact">
+              <div class="placeholder-icon"><svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/></svg></div>
+              <p>Откройте папку, чтобы увидеть её структуру</p>
+            </div>
+          </div>
+        </aside>
+
+        <div class="resize-handle" id="left-resizer" role="separator" aria-label="Изменить ширину дерева папок"></div>
+
+        <section class="panel gallery-panel" id="gallery-panel">
+          <div class="gallery-toolbar">
+            <div class="location-block">
+              <div class="breadcrumbs" id="breadcrumbs"><span>Галерея</span></div>
+              <div class="media-summary" id="media-summary">Выберите папку для начала</div>
+            </div>
+            <div class="toolbar-controls">
+              <label class="switch-control" title="Показывать медиа во всех вложенных папках">
+                <input type="checkbox" id="recursive-toggle" />
+                <span class="switch"></span>
+                <span>С подпапками</span>
+              </label>
+              <button class="button ghost" id="play-all-button" disabled>
+                <svg class="play-icon" viewBox="0 0 24 24"><path d="m9 7 8 5-8 5V7Z"/></svg>
+                <svg class="pause-icon" viewBox="0 0 24 24"><path d="M9 7v10M15 7v10"/></svg>
+                <span>Видео: выкл.</span>
+              </button>
+              <div class="zoom-control" title="Размер элементов">
+                <svg viewBox="0 0 24 24"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/></svg>
+                <input id="zoom-slider" type="range" min="140" max="420" value="230" step="10" aria-label="Размер элементов" />
+              </div>
+            </div>
+          </div>
+
+          <div class="gallery-scroll" id="gallery-scroll">
+            <div class="empty-state" id="empty-state">
+              <div class="empty-visual">
+                <div class="floating-card card-one"></div>
+                <div class="floating-card card-two"></div>
+                <svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/></svg>
+              </div>
+              <h1>Ваша медиатека — здесь</h1>
+              <p>Откройте папку с изображениями и видео.<br />Файлы останутся на вашем компьютере.</p>
+              <button class="button primary large" id="empty-open-button">Выбрать папку</button>
+              <div class="format-note">JPG · PNG · WEBP · MP4 · MOV · WEBM и другие</div>
+            </div>
+            <div class="loading-state hidden" id="loading-state">
+              <div class="spinner"></div>
+              <strong id="loading-label">Собираем галерею…</strong>
+              <div class="loading-progress"><span id="loading-progress-bar"></span></div>
+              <span class="loading-progress-text" id="loading-progress-text">Подготовка списка файлов</span>
+            </div>
+            <div class="media-grid hidden" id="media-grid"></div>
+            <div class="folder-empty hidden" id="folder-empty">
+              <div class="placeholder-icon"><svg viewBox="0 0 24 24"><path d="M4 8h16M8 4v4M16 4v4M6 12h.01M10 12h.01M14 12h.01M18 12h.01M6 16h.01M10 16h.01M14 16h.01M18 16h.01"/></svg></div>
+              <h3>Медиафайлов не найдено</h3>
+              <p>Попробуйте включить «С подпапками» или выбрать другую папку.</p>
+            </div>
+          </div>
+        </section>
+
+        <div class="resize-handle" id="right-resizer" role="separator" aria-label="Изменить ширину предпросмотра"></div>
+
+        <aside class="panel preview-panel" id="right-panel">
+          <div class="panel-heading preview-heading">
+            <div>
+              <div class="eyebrow">Выбранный файл</div>
+              <h2>Предпросмотр</h2>
+            </div>
+            <button class="icon-button inner-collapse" id="right-collapse" aria-label="Свернуть правую панель" title="Свернуть">
+              <svg viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></svg>
+            </button>
+          </div>
+          <div class="preview-content" id="preview-content">
+            <div class="panel-placeholder">
+              <div class="placeholder-icon eye"><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></div>
+              <p>Выберите фото или видео<br />для предпросмотра</p>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <div class="panel-restore left hidden" id="left-restore">
+        <button class="icon-button" title="Показать дерево папок" aria-label="Показать дерево папок">
+          <svg viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></svg>
+        </button>
+      </div>
+      <div class="panel-restore right hidden" id="right-restore">
+        <button class="icon-button" title="Показать предпросмотр" aria-label="Показать предпросмотр">
+          <svg viewBox="0 0 24 24"><path d="m14 7-5 5 5 5"/></svg>
+        </button>
+      </div>
+
+      <div class="toast-region" id="toast-region" aria-live="polite"></div>
+      <div class="modal-backdrop hidden" id="settings-modal">
+        <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <div class="settings-heading">
+            <div>
+              <div class="eyebrow">Внешний вид</div>
+              <h2 id="settings-title">Настройки цветов</h2>
+            </div>
+            <button class="icon-button" id="settings-close" aria-label="Закрыть настройки" title="Закрыть">
+              <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg>
+            </button>
+          </div>
+          <p class="settings-copy">Изменения применяются сразу и сохраняются на этом компьютере.</p>
+          <div class="theme-presets" aria-label="Готовые цветовые темы">
+            <button class="theme-preset preset-lime" data-accent="#b7f34a" data-background="#080a0f" data-surface="#0e1118" title="Лайм"><span></span>Лайм</button>
+            <button class="theme-preset preset-iris" data-accent="#8b7cff" data-background="#090a12" data-surface="#111321" title="Ирис"><span></span>Ирис</button>
+            <button class="theme-preset preset-ocean" data-accent="#48c7ff" data-background="#071015" data-surface="#0d1820" title="Океан"><span></span>Океан</button>
+            <button class="theme-preset preset-amber" data-accent="#ff9f43" data-background="#100b08" data-surface="#1a120e" title="Янтарь"><span></span>Янтарь</button>
+          </div>
+          <div class="color-settings">
+            <label class="color-setting">
+              <span><strong>Акцент</strong><small>Кнопки и выделение</small></span>
+              <input type="color" id="accent-color" value="#b7f34a" />
+            </label>
+            <label class="color-setting">
+              <span><strong>Фон</strong><small>Основная область приложения</small></span>
+              <input type="color" id="background-color" value="#080a0f" />
+            </label>
+            <label class="color-setting">
+              <span><strong>Панели</strong><small>Дерево папок и предпросмотр</small></span>
+              <input type="color" id="surface-color" value="#0e1118" />
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button class="button ghost" id="settings-reset">Сбросить цвета</button>
+            <button class="button primary" id="settings-done">Готово</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-backdrop hidden" id="delete-modal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+          <div class="modal-icon"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg></div>
+          <h2 id="delete-title">Переместить в корзину?</h2>
+          <p id="delete-description">Файл исчезнет из исходной папки, но его можно будет восстановить из Корзины Windows.</p>
+          <div class="modal-actions">
+            <button class="button ghost" id="delete-cancel">Отмена</button>
+            <button class="button danger" id="delete-confirm">В корзину</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
