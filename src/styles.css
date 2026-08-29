@@ -669,6 +669,7 @@ body.resizing {
 }
 
 .audio-card-visual {
+  position: relative;
   display: grid;
   width: 100%;
   height: 100%;
@@ -677,6 +678,47 @@ body.resizing {
   background:
     radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 48%),
     linear-gradient(145deg, color-mix(in srgb, var(--surface-raised) 88%, #fff), var(--bg));
+}
+
+.audio-cover {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.audio-card-visual.has-cover .audio-cover {
+  opacity: 1;
+}
+
+.file-card-visual {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: var(--muted-bright);
+  background:
+    radial-gradient(circle at 50% 44%, rgba(255,255,255,.055), transparent 46%),
+    linear-gradient(145deg, var(--surface-raised), var(--bg));
+}
+
+.file-card-icon {
+  display: grid;
+  width: 62px;
+  height: 62px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background: rgba(255,255,255,.025);
+}
+
+.file-card-icon svg {
+  width: 30px;
+  height: 30px;
 }
 
 .audio-card-icon {
@@ -1020,6 +1062,7 @@ body.resizing {
 }
 
 .audio-preview-art {
+  position: relative;
   display: grid;
   width: 150px;
   height: 150px;
@@ -1031,6 +1074,22 @@ body.resizing {
   border-radius: 36px;
   background: color-mix(in srgb, var(--accent) 7%, transparent);
   box-shadow: 0 20px 55px rgba(0,0,0,.24);
+  overflow: hidden;
+}
+
+.audio-preview-cover {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.audio-preview-art.has-cover .audio-preview-cover {
+  opacity: 1;
 }
 
 .audio-preview-art svg {
@@ -1047,6 +1106,36 @@ body.resizing {
 
 .preview-stage audio {
   width: 100%;
+}
+
+.preview-stage.file-preview-stage {
+  background: linear-gradient(145deg, var(--surface-raised), var(--bg));
+}
+
+.file-preview-art {
+  display: grid;
+  width: 150px;
+  height: 150px;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: var(--muted-bright);
+  border: 1px solid var(--line-strong);
+  border-radius: 36px;
+  background: rgba(255,255,255,.025);
+  box-shadow: 0 20px 55px rgba(0,0,0,.24);
+}
+
+.file-preview-art svg {
+  width: 54px;
+  height: 54px;
+}
+
+.file-preview-art span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
 }
 
 .preview-stage video {
@@ -1153,6 +1242,63 @@ body.resizing {
   flex-direction: column;
   gap: 8px;
   pointer-events: none;
+}
+
+.file-context-menu {
+  position: fixed;
+  z-index: 400;
+  width: 270px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(22, 26, 35, .98);
+  box-shadow: 0 22px 70px rgba(0,0,0,.48);
+  backdrop-filter: blur(18px);
+}
+
+.file-context-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  color: var(--muted-bright);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.file-context-menu button:hover,
+.file-context-menu button:focus-visible {
+  color: var(--text);
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.file-context-menu button.danger {
+  color: #f38b8b;
+}
+
+.file-context-menu button.danger:hover,
+.file-context-menu button.danger:focus-visible {
+  color: #fff;
+  background: rgba(255,104,104,.12);
+}
+
+.file-context-menu svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--line);
 }
 
 .toast {

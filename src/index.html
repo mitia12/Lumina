@@ -95,6 +95,10 @@
                 <svg viewBox="0 0 24 24"><path d="M9 17.5V6l10-2v11.5M9 9l10-2"/><circle cx="6" cy="17.5" r="3"/><circle cx="16" cy="15.5" r="3"/></svg>
                 <span>Аудио</span>
               </button>
+              <button class="media-filter active" data-kind="file" aria-pressed="true" title="Показывать остальные файлы">
+                <svg viewBox="0 0 24 24"><path d="M12 2.8 14 4l2.4-.3.9 2.2 2.1 1.2-.5 2.4 1.4 2-1.4 2 .5 2.4-2.1 1.2-.9 2.2-2.4-.3-2 1.2-2-1.2-2.4.3-.9-2.2-2.1-1.2.5-2.4-1.4-2 1.4-2-.5-2.4 2.1-1.2.9-2.2L10 4l2-1.2Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>Файлы</span>
+              </button>
             </div>
           </div>
 
@@ -106,7 +110,7 @@
                 <svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/></svg>
               </div>
               <h1>Ваша медиатека — здесь</h1>
-              <p>Откройте папку с изображениями, видео и аудио.<br />Файлы останутся на вашем компьютере.</p>
+              <p>Откройте папку с файлами.<br />Они останутся на вашем компьютере.</p>
               <button class="button primary large" id="empty-open-button">Выбрать папку</button>
               <div class="format-note">JPG · PNG · MP4 · MOV · MP3 · FLAC · WAV и другие</div>
             </div>
@@ -119,7 +123,7 @@
             <div class="media-grid hidden" id="media-grid"></div>
             <div class="folder-empty hidden" id="folder-empty">
               <div class="placeholder-icon"><svg viewBox="0 0 24 24"><path d="M4 8h16M8 4v4M16 4v4M6 12h.01M10 12h.01M14 12h.01M18 12h.01M6 16h.01M10 16h.01M14 16h.01M18 16h.01"/></svg></div>
-              <h3 id="folder-empty-title">Медиафайлов не найдено</h3>
+              <h3 id="folder-empty-title">Файлов не найдено</h3>
               <p id="folder-empty-copy">Попробуйте включить «С подпапками» или выбрать другую папку.</p>
             </div>
           </div>
@@ -140,7 +144,7 @@
           <div class="preview-content" id="preview-content">
             <div class="panel-placeholder">
               <div class="placeholder-icon eye"><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></div>
-              <p>Выберите фото, видео или аудио<br />для предпросмотра</p>
+              <p>Выберите файл<br />для предпросмотра</p>
             </div>
           </div>
         </aside>
@@ -158,6 +162,17 @@
       </div>
 
       <div class="toast-region" id="toast-region" aria-live="polite"></div>
+      <div class="file-context-menu hidden" id="file-context-menu" role="menu">
+        <button id="context-open-default" role="menuitem">
+          <svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></svg>
+          <span>Открыть в стандартном приложении</span>
+        </button>
+        <div class="context-menu-separator"></div>
+        <button class="danger" id="context-delete" role="menuitem">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+          <span>Удалить</span>
+        </button>
+      </div>
       <div class="modal-backdrop hidden" id="settings-modal">
         <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
           <div class="settings-heading">

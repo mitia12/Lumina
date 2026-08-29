@@ -336,8 +336,8 @@ async function servePreviewRequest(request) {
 
 function serializeEntry(parentPath, dirent) {
   const fullPath = path.join(parentPath, dirent.name);
-  const kind = dirent.isDirectory() ? 'directory' : mediaKind(dirent.name);
-  const hasVisualThumbnail = kind === 'image' || kind === 'video';
+  const kind = dirent.isDirectory() ? 'directory' : (mediaKind(dirent.name) || 'file');
+  const hasVisualThumbnail = kind === 'image' || kind === 'video' || kind === 'audio';
   return {
     name: dirent.name,
     path: fullPath,
@@ -358,7 +358,7 @@ async function readVisibleChildren(directoryPath) {
   const safeDirectory = requireSafePath(directoryPath);
   const entries = await fs.readdir(safeDirectory, { withFileTypes: true });
   return entries
-    .filter((entry) => entry.isDirectory() || (entry.isFile() && mediaKind(entry.name)))
+    .filter((entry) => entry.isDirectory() || entry.isFile())
     .map((entry) => serializeEntry(safeDirectory, entry))
     .sort(compareEntries);
 }
@@ -388,8 +388,8 @@ async function listMedia(directoryPath, recursive) {
           if (recursive) pending.push(fullPath);
           continue;
         }
-        const kind = mediaKind(entry.name);
-        if (!kind) continue;
+        if (!entry.isFile()) continue;
+        const kind = mediaKind(entry.name) || 'file';
         media.push({
           name: entry.name,
           path: fullPath,
@@ -397,7 +397,7 @@ async function listMedia(directoryPath, recursive) {
           relativeDirectory: path.relative(safeDirectory, directory) || '.',
           kind,
           url: toMediaUrl(fullPath),
-          thumbnailUrl: kind === 'image' || kind === 'video' ? toThumbnailUrl(fullPath) : null,
+          thumbnailUrl: kind === 'image' || kind === 'video' || kind === 'audio' ? toThumbnailUrl(fullPath) : null,
           previewUrl: kind === 'video' ? toPreviewUrl(fullPath) : null
         });
       }
@@ -435,7 +435,7 @@ function startRootWatcher() {
 
 async function chooseRoot() {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Открыть папку с фото, видео и аудио',
+    title: 'Открыть папку с файлами',
     properties: ['openDirectory']
   });
   if (result.canceled || !result.filePaths[0]) return null;
@@ -468,7 +468,7 @@ async function prepareMediaItems(sender, items, requestId) {
         const filePath = requireSafePath(item.path);
         const stat = await fs.stat(filePath);
         const tasks = [];
-        if (item.kind === 'image' || item.kind === 'video') tasks.push(ensureThumbnail(filePath, stat));
+        if (item.kind === 'image' || item.kind === 'video' || item.kind === 'audio') tasks.push(ensureThumbnail(filePath, stat));
         if (item.kind === 'video') tasks.push(ensureVideoPreview(filePath, stat));
         await Promise.all(tasks);
       } catch {
@@ -560,6 +560,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('item:reveal', async (_event, itemPath) => {
     const safePath = requireSafePath(itemPath);
     shell.showItemInFolder(safePath);
+    return true;
+  });
+  ipcMain.handle('item:open-default', async (_event, itemPath) => {
+    const safePath = requireSafePath(itemPath);
+    const errorMessage = await shell.openPath(safePath);
+    if (errorMessage) throw new Error(errorMessage);
     return true;
   });
 

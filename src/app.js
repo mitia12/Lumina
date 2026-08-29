@@ -4,13 +4,15 @@ const ICONS = {
   image: '<svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><circle cx="15.5" cy="8.5" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg>',
   video: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m10 9 5 3-5 3V9Z"/></svg>',
   audio: '<svg viewBox="0 0 24 24"><path d="M9 17.5V6l10-2v11.5M9 9l10-2"/><circle cx="6" cy="17.5" r="3"/><circle cx="16" cy="15.5" r="3"/></svg>',
+  file: '<svg viewBox="0 0 24 24"><path d="M12 2.8 14 4l2.4-.3.9 2.2 2.1 1.2-.5 2.4 1.4 2-1.4 2 .5 2.4-2.1 1.2-.9 2.2-2.4-.3-2 1.2-2-1.2-2.4.3-.9-2.2-2.1-1.2.5-2.4-1.4-2 1.4-2-.5-2.4 2.1-1.2.9-2.2L10 4l2-1.2Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  open: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>',
   reveal: '<svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/><path d="m10 15 4-4M11 11h3v3"/></svg>'
 };
 
 const DEFAULT_THEME = { accent: '#b7f34a', background: '#080a0f', surface: '#0e1118' };
-const MEDIA_KINDS = ['image', 'video', 'audio'];
-const MEDIA_LABELS = { image: 'Фото', video: 'Видео', audio: 'Аудио' };
+const MEDIA_KINDS = ['image', 'video', 'audio', 'file'];
+const MEDIA_LABELS = { image: 'Фото', video: 'Видео', audio: 'Аудио', file: 'Файл' };
 const GRID_GAP = 14;
 const CARD_CAPTION_HEIGHT = 54;
 const OVERSCAN_ROWS = 4;
@@ -59,6 +61,9 @@ const dom = {
   backgroundColor: document.querySelector('#background-color'),
   surfaceColor: document.querySelector('#surface-color'),
   toastRegion: document.querySelector('#toast-region'),
+  contextMenu: document.querySelector('#file-context-menu'),
+  contextOpenDefault: document.querySelector('#context-open-default'),
+  contextDelete: document.querySelector('#context-delete'),
   deleteModal: document.querySelector('#delete-modal'),
   deleteDescription: document.querySelector('#delete-description'),
   deleteCancel: document.querySelector('#delete-cancel'),
@@ -78,6 +83,7 @@ const state = {
   recursive: false,
   autoplay: false,
   requestId: 0,
+  contextItem: null,
   pendingDelete: null,
   confirmBeforeDelete: storedConfirmDelete === null ? true : storedConfirmDelete === 'true',
   queueAutoplay: storedQueueAutoplay === 'true',
@@ -326,6 +332,7 @@ function createTreeNode(entry, depth, expanded = false) {
     row.addEventListener('click', () => selectDirectory(entry.path));
   } else {
     row.addEventListener('click', () => selectMedia(entry));
+    row.addEventListener('contextmenu', (event) => showFileContextMenu(event, entry));
   }
   return node;
 }
@@ -498,16 +505,17 @@ function renderGallery() {
   const videoCount = state.media.filter((item) => item.kind === 'video').length;
   const imageCount = state.media.filter((item) => item.kind === 'image').length;
   const audioCount = state.media.filter((item) => item.kind === 'audio').length;
+  const fileCount = state.media.filter((item) => item.kind === 'file').length;
   dom.playAll.disabled = videoCount === 0;
   const filteredSuffix = state.media.length !== state.allMedia.length ? ` из ${state.allMedia.length}` : '';
-  dom.mediaSummary.textContent = `${pluralFiles(state.media.length)}${filteredSuffix} · ${imageCount} фото · ${videoCount} видео · ${audioCount} аудио${state.recursive ? ' · включая подпапки' : ''}`;
+  dom.mediaSummary.textContent = `${pluralFiles(state.media.length)}${filteredSuffix} · ${imageCount} фото · ${videoCount} видео · ${audioCount} аудио · прочие: ${fileCount}${state.recursive ? ' · включая подпапки' : ''}`;
 
   if (!state.media.length) {
     setAutoplay(false);
     const filteredEmpty = state.allMedia.length > 0;
-    dom.folderEmptyTitle.textContent = filteredEmpty ? 'Нет файлов выбранных типов' : 'Медиафайлов не найдено';
+    dom.folderEmptyTitle.textContent = filteredEmpty ? 'Нет файлов выбранных типов' : 'Файлов не найдено';
     dom.folderEmptyCopy.textContent = filteredEmpty
-      ? 'Измените фильтры «Фото», «Видео» и «Аудио» в верхней панели.'
+      ? 'Измените фильтры «Фото», «Видео», «Аудио» и «Файлы» в верхней панели.'
       : 'Попробуйте включить «С подпапками» или выбрать другую папку.';
     setGalleryView('empty');
     return;
@@ -668,6 +676,29 @@ function createMediaCard(item) {
     mediaElement = document.createElement('div');
     mediaElement.className = 'audio-card-visual';
     mediaElement.innerHTML = `<span class="audio-card-icon">${ICONS.audio}</span><span class="audio-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>`;
+    if (item.thumbnailUrl) {
+      const cover = document.createElement('img');
+      cover.className = 'audio-cover';
+      cover.src = item.thumbnailUrl;
+      cover.alt = '';
+      cover.loading = 'lazy';
+      cover.decoding = 'async';
+      cover.addEventListener('load', () => {
+        mediaElement.classList.add('has-cover');
+        card.classList.remove('loading-media');
+      }, { once: true });
+      cover.addEventListener('error', () => {
+        cover.remove();
+        card.classList.remove('loading-media');
+      }, { once: true });
+      mediaElement.prepend(cover);
+    } else {
+      card.classList.remove('loading-media');
+    }
+  } else if (item.kind === 'file') {
+    mediaElement = document.createElement('div');
+    mediaElement.className = 'file-card-visual';
+    mediaElement.innerHTML = `<span class="file-card-icon">${ICONS.file}</span>`;
     card.classList.remove('loading-media');
   } else if (useThumbnail) {
     mediaElement = document.createElement('img');
@@ -727,6 +758,7 @@ function createMediaCard(item) {
   card.append(frame, caption);
 
   card.addEventListener('click', () => selectMedia(item));
+  card.addEventListener('contextmenu', (event) => showFileContextMenu(event, item));
   card.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -764,7 +796,7 @@ function renderEmptyPreview() {
     <div class="placeholder-icon eye">
       <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>
     </div>
-    <p>Выберите фото, видео или аудио<br>для предпросмотра</p>`;
+    <p>Выберите файл<br>для предпросмотра</p>`;
   dom.preview.append(placeholder);
   updateSelectionClasses();
 }
@@ -797,19 +829,34 @@ async function renderPreview(item, options = {}) {
     mediaElement.controls = true;
     mediaElement.preload = 'metadata';
     mediaElement.addEventListener('ended', () => playNextInQueue(item));
-  } else {
+  } else if (item.kind === 'audio') {
     stage.classList.add('audio-preview-stage');
     const artwork = document.createElement('div');
     artwork.className = 'audio-preview-art';
     artwork.innerHTML = `${ICONS.audio}<span>Аудио</span>`;
+    if (item.thumbnailUrl) {
+      const cover = document.createElement('img');
+      cover.className = 'audio-preview-cover';
+      cover.src = item.thumbnailUrl;
+      cover.alt = '';
+      cover.addEventListener('load', () => artwork.classList.add('has-cover'), { once: true });
+      cover.addEventListener('error', () => cover.remove(), { once: true });
+      artwork.prepend(cover);
+    }
     mediaElement = document.createElement('audio');
     mediaElement.src = item.url;
     mediaElement.controls = true;
     mediaElement.preload = 'metadata';
     mediaElement.addEventListener('ended', () => playNextInQueue(item));
     stage.append(artwork);
+  } else {
+    stage.classList.add('file-preview-stage');
+    const artwork = document.createElement('div');
+    artwork.className = 'file-preview-art';
+    artwork.innerHTML = `${ICONS.file}<span>Файл</span>`;
+    stage.append(artwork);
   }
-  stage.append(mediaElement);
+  if (mediaElement) stage.append(mediaElement);
 
   const details = document.createElement('div');
   details.className = 'preview-details';
@@ -854,6 +901,7 @@ async function renderPreview(item, options = {}) {
 
   details.append(title, kind, list, actions);
   active.append(stage, details);
+  active.addEventListener('contextmenu', (event) => showFileContextMenu(event, item));
   dom.preview.replaceChildren(active);
   if (options.autoplay && mediaElement instanceof HTMLMediaElement) {
     mediaElement.play().catch(() => {});
@@ -870,6 +918,39 @@ async function renderPreview(item, options = {}) {
       modified.value.textContent = 'Недоступно';
     }
   }
+}
+
+async function openInDefaultApp(item) {
+  if (!item) return;
+  try {
+    await window.lumina.openItem(item.path);
+  } catch (error) {
+    showToast(`Не удалось открыть файл: ${formatError(error)}`, 'error');
+  }
+}
+
+function hideFileContextMenu() {
+  dom.contextMenu.classList.add('hidden');
+  state.contextItem = null;
+}
+
+function showFileContextMenu(event, item) {
+  event.preventDefault();
+  event.stopPropagation();
+  hideFileContextMenu();
+  if (event.ctrlKey) {
+    void openInDefaultApp(item);
+    return;
+  }
+  state.contextItem = item;
+  dom.contextMenu.classList.remove('hidden');
+  const menuWidth = dom.contextMenu.offsetWidth;
+  const menuHeight = dom.contextMenu.offsetHeight;
+  const left = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
+  const top = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
+  dom.contextMenu.style.left = `${left}px`;
+  dom.contextMenu.style.top = `${top}px`;
+  dom.contextOpenDefault.focus();
 }
 
 function createDetailRow(label, initialValue) {
@@ -1032,6 +1113,21 @@ dom.queueAutoplayToggle.addEventListener('change', () => {
 dom.mediaFilters.forEach((button) => {
   button.addEventListener('click', () => toggleMediaFilter(button.dataset.kind));
 });
+dom.contextOpenDefault.addEventListener('click', () => {
+  const item = state.contextItem;
+  hideFileContextMenu();
+  void openInDefaultApp(item);
+});
+dom.contextDelete.addEventListener('click', () => {
+  const item = state.contextItem;
+  hideFileContextMenu();
+  if (item) requestDelete(item);
+});
+window.addEventListener('pointerdown', (event) => {
+  if (!dom.contextMenu.classList.contains('hidden') && !dom.contextMenu.contains(event.target)) hideFileContextMenu();
+});
+window.addEventListener('blur', hideFileContextMenu);
+window.addEventListener('scroll', hideFileContextMenu, true);
 [dom.accentColor, dom.backgroundColor, dom.surfaceColor].forEach((input) => {
   input.addEventListener('input', applyThemeInputs);
 });
@@ -1081,6 +1177,10 @@ galleryResizeObserver.observe(document.querySelector('#gallery-panel'));
 window.addEventListener('keydown', (event) => {
   const tag = event.target.tagName;
   const isEditing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'AUDIO' || tag === 'VIDEO';
+  if (event.key === 'Escape' && !dom.contextMenu.classList.contains('hidden')) {
+    hideFileContextMenu();
+    return;
+  }
   if (event.key === 'Escape' && !dom.deleteModal.classList.contains('hidden')) {
     closeDeleteModal();
     return;
