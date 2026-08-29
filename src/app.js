@@ -63,6 +63,7 @@ const dom = {
   toastRegion: document.querySelector('#toast-region'),
   contextMenu: document.querySelector('#file-context-menu'),
   contextOpenDefault: document.querySelector('#context-open-default'),
+  contextReveal: document.querySelector('#context-reveal'),
   contextDelete: document.querySelector('#context-delete'),
   deleteModal: document.querySelector('#delete-modal'),
   deleteDescription: document.querySelector('#delete-description'),
@@ -439,9 +440,19 @@ function mediaListsEqual(left, right) {
   ));
 }
 
+function isAnimatedGif(item) {
+  return item?.kind === 'image' && /\.gif$/i.test(item.name || '');
+}
+
+function isAutoplayMedia(item) {
+  return item?.kind === 'video' || isAnimatedGif(item);
+}
+
 async function warmMediaCache(items, requestId, quiet) {
   const resources = items.flatMap((item) => (
-    item.kind === 'video' ? [item.thumbnailUrl, item.previewUrl] : [item.thumbnailUrl]
+    item.kind === 'video'
+      ? [item.thumbnailUrl, item.previewUrl]
+      : isAnimatedGif(item) ? [item.thumbnailUrl, item.url] : [item.thumbnailUrl]
   )).filter(Boolean);
   let nextIndex = 0;
   let completed = 0;
@@ -506,7 +517,7 @@ function renderGallery() {
   const imageCount = state.media.filter((item) => item.kind === 'image').length;
   const audioCount = state.media.filter((item) => item.kind === 'audio').length;
   const fileCount = state.media.filter((item) => item.kind === 'file').length;
-  dom.playAll.disabled = videoCount === 0;
+  dom.playAll.disabled = !state.media.some(isAutoplayMedia);
   const filteredSuffix = state.media.length !== state.allMedia.length ? ` из ${state.allMedia.length}` : '';
   dom.mediaSummary.textContent = `${pluralFiles(state.media.length)}${filteredSuffix} · ${imageCount} фото · ${videoCount} видео · ${audioCount} аудио · прочие: ${fileCount}${state.recursive ? ' · включая подпапки' : ''}`;
 
@@ -671,7 +682,8 @@ function createMediaCard(item) {
   const frame = document.createElement('div');
   frame.className = 'media-frame';
   let mediaElement;
-  const useThumbnail = item.kind !== 'video' || !state.autoplay;
+  const animatedGif = isAnimatedGif(item);
+  const useThumbnail = (item.kind !== 'video' && !animatedGif) || !state.autoplay;
   if (item.kind === 'audio') {
     mediaElement = document.createElement('div');
     mediaElement.className = 'audio-card-visual';
@@ -715,6 +727,12 @@ function createMediaCard(item) {
         card.classList.remove('loading-media');
       }
     });
+  } else if (animatedGif) {
+    mediaElement = document.createElement('img');
+    mediaElement.src = item.url;
+    mediaElement.alt = item.name;
+    mediaElement.decoding = 'async';
+    mediaElement.addEventListener('load', () => card.classList.remove('loading-media'), { once: true });
   } else {
     mediaElement = document.createElement('video');
     mediaElement.dataset.src = item.previewUrl || item.url;
@@ -965,9 +983,9 @@ function createDetailRow(label, initialValue) {
 }
 
 function setAutoplay(enabled) {
-  state.autoplay = Boolean(enabled && state.media.some((item) => item.kind === 'video'));
+  state.autoplay = Boolean(enabled && state.media.some(isAutoplayMedia));
   dom.playAll.classList.toggle('active', state.autoplay);
-  dom.playAllLabel.textContent = state.autoplay ? 'Видео: вкл.' : 'Видео: выкл.';
+  dom.playAllLabel.textContent = state.autoplay ? 'Видео/GIF: вкл.' : 'Видео/GIF: выкл.';
   if (state.media.length) renderVirtualWindow(true);
 }
 
@@ -1118,6 +1136,16 @@ dom.contextOpenDefault.addEventListener('click', () => {
   hideFileContextMenu();
   void openInDefaultApp(item);
 });
+dom.contextReveal.addEventListener('click', async () => {
+  const item = state.contextItem;
+  hideFileContextMenu();
+  if (!item) return;
+  try {
+    await window.lumina.revealItem(item.path);
+  } catch (error) {
+    showToast(`Не удалось открыть папку: ${formatError(error)}`, 'error');
+  }
+});
 dom.contextDelete.addEventListener('click', () => {
   const item = state.contextItem;
   hideFileContextMenu();
@@ -1196,7 +1224,7 @@ window.addEventListener('keydown', (event) => {
   } else if (event.key === 'Delete' && state.selected) {
     event.preventDefault();
     requestDelete(state.selected);
-  } else if (event.key === ' ' && state.media.some((item) => item.kind === 'video')) {
+  } else if (event.key === ' ' && state.media.some(isAutoplayMedia)) {
     event.preventDefault();
     setAutoplay(!state.autoplay);
   } else if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && state.media.length) {
