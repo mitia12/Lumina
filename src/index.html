@@ -82,6 +82,20 @@
                 <input id="zoom-slider" type="range" min="140" max="420" value="230" step="10" aria-label="Размер элементов" />
               </div>
             </div>
+            <div class="media-type-filters" role="group" aria-label="Отображаемые типы файлов">
+              <button class="media-filter active" data-kind="image" aria-pressed="true" title="Показывать изображения">
+                <svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><circle cx="15.5" cy="8.5" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg>
+                <span>Фото</span>
+              </button>
+              <button class="media-filter active" data-kind="video" aria-pressed="true" title="Показывать видео">
+                <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m10 9 5 3-5 3V9Z"/></svg>
+                <span>Видео</span>
+              </button>
+              <button class="media-filter active" data-kind="audio" aria-pressed="true" title="Показывать аудио">
+                <svg viewBox="0 0 24 24"><path d="M9 17.5V6l10-2v11.5M9 9l10-2"/><circle cx="6" cy="17.5" r="3"/><circle cx="16" cy="15.5" r="3"/></svg>
+                <span>Аудио</span>
+              </button>
+            </div>
           </div>
 
           <div class="gallery-scroll" id="gallery-scroll">
@@ -92,9 +106,9 @@
                 <svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/></svg>
               </div>
               <h1>Ваша медиатека — здесь</h1>
-              <p>Откройте папку с изображениями и видео.<br />Файлы останутся на вашем компьютере.</p>
+              <p>Откройте папку с изображениями, видео и аудио.<br />Файлы останутся на вашем компьютере.</p>
               <button class="button primary large" id="empty-open-button">Выбрать папку</button>
-              <div class="format-note">JPG · PNG · WEBP · MP4 · MOV · WEBM и другие</div>
+              <div class="format-note">JPG · PNG · MP4 · MOV · MP3 · FLAC · WAV и другие</div>
             </div>
             <div class="loading-state hidden" id="loading-state">
               <div class="spinner"></div>
@@ -105,8 +119,8 @@
             <div class="media-grid hidden" id="media-grid"></div>
             <div class="folder-empty hidden" id="folder-empty">
               <div class="placeholder-icon"><svg viewBox="0 0 24 24"><path d="M4 8h16M8 4v4M16 4v4M6 12h.01M10 12h.01M14 12h.01M18 12h.01M6 16h.01M10 16h.01M14 16h.01M18 16h.01"/></svg></div>
-              <h3>Медиафайлов не найдено</h3>
-              <p>Попробуйте включить «С подпапками» или выбрать другую папку.</p>
+              <h3 id="folder-empty-title">Медиафайлов не найдено</h3>
+              <p id="folder-empty-copy">Попробуйте включить «С подпапками» или выбрать другую папку.</p>
             </div>
           </div>
         </section>
@@ -126,7 +140,7 @@
           <div class="preview-content" id="preview-content">
             <div class="panel-placeholder">
               <div class="placeholder-icon eye"><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></div>
-              <p>Выберите фото или видео<br />для предпросмотра</p>
+              <p>Выберите фото, видео или аудио<br />для предпросмотра</p>
             </div>
           </div>
         </aside>
@@ -184,6 +198,16 @@
               </span>
               <span class="settings-switch-control">
                 <input type="checkbox" id="confirm-delete-toggle" checked />
+                <span class="switch"></span>
+              </span>
+            </label>
+            <label class="setting-toggle-row" for="queue-autoplay-toggle">
+              <span class="setting-toggle-copy">
+                <strong>Автовоспроизведение очереди</strong>
+                <small>После окончания включать следующий видео- или аудиофайл</small>
+              </span>
+              <span class="settings-switch-control">
+                <input type="checkbox" id="queue-autoplay-toggle" />
                 <span class="switch"></span>
               </span>
             </label>

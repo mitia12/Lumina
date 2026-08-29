@@ -3,11 +3,14 @@ const ICONS = {
   folder: '<svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/></svg>',
   image: '<svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><circle cx="15.5" cy="8.5" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg>',
   video: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m10 9 5 3-5 3V9Z"/></svg>',
+  audio: '<svg viewBox="0 0 24 24"><path d="M9 17.5V6l10-2v11.5M9 9l10-2"/><circle cx="6" cy="17.5" r="3"/><circle cx="16" cy="15.5" r="3"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>',
   reveal: '<svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/><path d="m10 15 4-4M11 11h3v3"/></svg>'
 };
 
 const DEFAULT_THEME = { accent: '#b7f34a', background: '#080a0f', surface: '#0e1118' };
+const MEDIA_KINDS = ['image', 'video', 'audio'];
+const MEDIA_LABELS = { image: 'Фото', video: 'Видео', audio: 'Аудио' };
 const GRID_GAP = 14;
 const CARD_CAPTION_HEIGHT = 54;
 const OVERSCAN_ROWS = 4;
@@ -21,6 +24,7 @@ const dom = {
   tree: document.querySelector('#tree-container'),
   breadcrumbs: document.querySelector('#breadcrumbs'),
   mediaSummary: document.querySelector('#media-summary'),
+  mediaFilters: [...document.querySelectorAll('.media-filter')],
   recursive: document.querySelector('#recursive-toggle'),
   playAll: document.querySelector('#play-all-button'),
   playAllLabel: document.querySelector('#play-all-button span'),
@@ -33,6 +37,8 @@ const dom = {
   loadingProgressBar: document.querySelector('#loading-progress-bar'),
   loadingProgressText: document.querySelector('#loading-progress-text'),
   folderEmpty: document.querySelector('#folder-empty'),
+  folderEmptyTitle: document.querySelector('#folder-empty-title'),
+  folderEmptyCopy: document.querySelector('#folder-empty-copy'),
   preview: document.querySelector('#preview-content'),
   leftToggle: document.querySelector('#left-panel-toggle'),
   rightToggle: document.querySelector('#right-panel-toggle'),
@@ -48,6 +54,7 @@ const dom = {
   settingsDone: document.querySelector('#settings-done'),
   settingsReset: document.querySelector('#settings-reset'),
   confirmDeleteToggle: document.querySelector('#confirm-delete-toggle'),
+  queueAutoplayToggle: document.querySelector('#queue-autoplay-toggle'),
   accentColor: document.querySelector('#accent-color'),
   backgroundColor: document.querySelector('#background-color'),
   surfaceColor: document.querySelector('#surface-color'),
@@ -60,16 +67,20 @@ const dom = {
 
 const storedTileSize = Number(localStorage.getItem('lumina:tile-size')) || 230;
 const storedConfirmDelete = localStorage.getItem('lumina:confirm-delete');
+const storedQueueAutoplay = localStorage.getItem('lumina:queue-autoplay');
 const state = {
   root: null,
   currentDirectory: null,
   media: [],
+  allMedia: [],
+  mediaFilters: getStoredMediaFilters(),
   selected: null,
   recursive: false,
   autoplay: false,
   requestId: 0,
   pendingDelete: null,
   confirmBeforeDelete: storedConfirmDelete === null ? true : storedConfirmDelete === 'true',
+  queueAutoplay: storedQueueAutoplay === 'true',
   deletingPaths: new Set(),
   preparedPaths: new Set(),
   warmedPaths: new Set(),
@@ -78,6 +89,16 @@ const state = {
   leftWidth: Math.min(520, Math.max(180, Number(localStorage.getItem('lumina:left-width')) || 280)),
   rightWidth: Math.min(600, Math.max(260, Number(localStorage.getItem('lumina:right-width')) || 360))
 };
+
+function getStoredMediaFilters() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('lumina:media-filters') || 'null');
+    const valid = Array.isArray(stored) ? stored.filter((kind) => MEDIA_KINDS.includes(kind)) : MEDIA_KINDS;
+    return new Set(valid.length ? valid : MEDIA_KINDS);
+  } catch {
+    return new Set(MEDIA_KINDS);
+  }
+}
 
 function normalizeHex(value, fallback) {
   return /^#[0-9a-f]{6}$/i.test(value || '') ? value.toLowerCase() : fallback;
@@ -229,6 +250,7 @@ async function openFolder() {
     state.currentDirectory = root.path;
     state.selected = null;
     state.media = [];
+    state.allMedia = [];
     state.preparedPaths = new Set();
     state.warmedPaths = new Set();
     dom.rootTitle.textContent = root.name;
@@ -356,7 +378,7 @@ async function loadMedia(options = {}) {
   try {
     const media = await window.lumina.getMedia(state.currentDirectory, state.recursive);
     if (requestId !== state.requestId) return;
-    if (options.quiet && mediaListsEqual(media, state.media)) return;
+    if (options.quiet && mediaListsEqual(media, state.allMedia)) return;
 
     let libraryMedia = media;
     let itemsToPrepare = media.filter((item) => !state.preparedPaths.has(item.path));
@@ -388,15 +410,16 @@ async function loadMedia(options = {}) {
       for (const item of itemsToWarm) state.warmedPaths.add(item.path);
     }
 
-    state.media = media;
+    state.allMedia = media;
     if (state.selected && !media.some((item) => item.path === state.selected.path)) {
       state.selected = null;
       renderEmptyPreview();
     }
-    renderGallery();
+    applyMediaFilters({ resetScroll: false });
   } catch (error) {
     if (requestId !== state.requestId) return;
     state.media = [];
+    state.allMedia = [];
     setGalleryView('empty');
     dom.mediaSummary.textContent = 'Не удалось прочитать папку';
     showToast(formatError(error), 'error');
@@ -473,12 +496,19 @@ function renderBreadcrumbs() {
 function renderGallery() {
   clearVirtualCards();
   const videoCount = state.media.filter((item) => item.kind === 'video').length;
-  const imageCount = state.media.length - videoCount;
+  const imageCount = state.media.filter((item) => item.kind === 'image').length;
+  const audioCount = state.media.filter((item) => item.kind === 'audio').length;
   dom.playAll.disabled = videoCount === 0;
-  dom.mediaSummary.textContent = `${pluralFiles(state.media.length)} · ${imageCount} фото · ${videoCount} видео${state.recursive ? ' · включая подпапки' : ''}`;
+  const filteredSuffix = state.media.length !== state.allMedia.length ? ` из ${state.allMedia.length}` : '';
+  dom.mediaSummary.textContent = `${pluralFiles(state.media.length)}${filteredSuffix} · ${imageCount} фото · ${videoCount} видео · ${audioCount} аудио${state.recursive ? ' · включая подпапки' : ''}`;
 
   if (!state.media.length) {
     setAutoplay(false);
+    const filteredEmpty = state.allMedia.length > 0;
+    dom.folderEmptyTitle.textContent = filteredEmpty ? 'Нет файлов выбранных типов' : 'Медиафайлов не найдено';
+    dom.folderEmptyCopy.textContent = filteredEmpty
+      ? 'Измените фильтры «Фото», «Видео» и «Аудио» в верхней панели.'
+      : 'Попробуйте включить «С подпапками» или выбрать другую папку.';
     setGalleryView('empty');
     return;
   }
@@ -487,6 +517,36 @@ function renderGallery() {
   state.virtual.start = -1;
   state.virtual.end = -1;
   requestAnimationFrame(() => layoutVirtualGrid(true));
+}
+
+function syncMediaFilters() {
+  for (const button of dom.mediaFilters) {
+    const active = state.mediaFilters.has(button.dataset.kind);
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+}
+
+function applyMediaFilters(options = {}) {
+  state.media = state.allMedia.filter((item) => state.mediaFilters.has(item.kind));
+  if (options.resetScroll !== false) dom.galleryScroll.scrollTop = 0;
+  syncMediaFilters();
+  renderGallery();
+}
+
+function toggleMediaFilter(kind) {
+  if (!MEDIA_KINDS.includes(kind)) return;
+  if (state.mediaFilters.has(kind)) {
+    if (state.mediaFilters.size === 1) {
+      showToast('Должен быть включён хотя бы один тип файлов', 'error');
+      return;
+    }
+    state.mediaFilters.delete(kind);
+  } else {
+    state.mediaFilters.add(kind);
+  }
+  localStorage.setItem('lumina:media-filters', JSON.stringify(MEDIA_KINDS.filter((item) => state.mediaFilters.has(item))));
+  applyMediaFilters();
 }
 
 function disposeCard(card) {
@@ -603,8 +663,13 @@ function createMediaCard(item) {
   const frame = document.createElement('div');
   frame.className = 'media-frame';
   let mediaElement;
-  const useThumbnail = item.kind === 'image' || !state.autoplay;
-  if (useThumbnail) {
+  const useThumbnail = item.kind !== 'video' || !state.autoplay;
+  if (item.kind === 'audio') {
+    mediaElement = document.createElement('div');
+    mediaElement.className = 'audio-card-visual';
+    mediaElement.innerHTML = `<span class="audio-card-icon">${ICONS.audio}</span><span class="audio-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>`;
+    card.classList.remove('loading-media');
+  } else if (useThumbnail) {
     mediaElement = document.createElement('img');
     mediaElement.src = item.thumbnailUrl || item.url;
     mediaElement.alt = item.name;
@@ -636,7 +701,7 @@ function createMediaCard(item) {
 
   const badge = document.createElement('span');
   badge.className = 'media-badge';
-  badge.innerHTML = `${ICONS[item.kind]}<span>${item.kind === 'video' ? 'Видео' : 'Фото'}</span>`;
+  badge.innerHTML = `${ICONS[item.kind]}<span>${MEDIA_LABELS[item.kind]}</span>`;
 
   const remove = document.createElement('button');
   remove.className = 'card-delete';
@@ -657,7 +722,7 @@ function createMediaCard(item) {
   name.textContent = item.name;
   const location = document.createElement('div');
   location.className = 'media-path';
-  location.textContent = state.recursive && item.relativeDirectory !== '.' ? item.relativeDirectory : item.kind === 'video' ? 'Видео' : 'Изображение';
+  location.textContent = state.recursive && item.relativeDirectory !== '.' ? item.relativeDirectory : MEDIA_LABELS[item.kind];
   caption.append(name, location);
   card.append(frame, caption);
 
@@ -675,10 +740,10 @@ function createMediaCard(item) {
   return card;
 }
 
-function selectMedia(item) {
+function selectMedia(item, options = {}) {
   state.selected = item;
   updateSelectionClasses();
-  renderPreview(item);
+  renderPreview(item, options);
 }
 
 function updateSelectionClasses() {
@@ -699,12 +764,23 @@ function renderEmptyPreview() {
     <div class="placeholder-icon eye">
       <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>
     </div>
-    <p>Выберите фото или видео<br>для предпросмотра</p>`;
+    <p>Выберите фото, видео или аудио<br>для предпросмотра</p>`;
   dom.preview.append(placeholder);
   updateSelectionClasses();
 }
 
-async function renderPreview(item) {
+function playNextInQueue(item) {
+  if (!state.queueAutoplay) return;
+  const queue = state.media.filter((entry) => entry.kind === 'video' || entry.kind === 'audio');
+  const currentIndex = queue.findIndex((entry) => entry.path === item.path);
+  if (currentIndex < 0 || currentIndex >= queue.length - 1) return;
+  const next = queue[currentIndex + 1];
+  selectMedia(next, { autoplay: true });
+  const galleryIndex = state.media.findIndex((entry) => entry.path === next.path);
+  if (galleryIndex >= 0) scrollToMediaIndex(galleryIndex);
+}
+
+async function renderPreview(item, options = {}) {
   const active = document.createElement('div');
   active.className = 'preview-active';
 
@@ -715,11 +791,23 @@ async function renderPreview(item) {
     mediaElement = document.createElement('img');
     mediaElement.src = item.url;
     mediaElement.alt = item.name;
-  } else {
+  } else if (item.kind === 'video') {
     mediaElement = document.createElement('video');
     mediaElement.src = item.url;
     mediaElement.controls = true;
     mediaElement.preload = 'metadata';
+    mediaElement.addEventListener('ended', () => playNextInQueue(item));
+  } else {
+    stage.classList.add('audio-preview-stage');
+    const artwork = document.createElement('div');
+    artwork.className = 'audio-preview-art';
+    artwork.innerHTML = `${ICONS.audio}<span>Аудио</span>`;
+    mediaElement = document.createElement('audio');
+    mediaElement.src = item.url;
+    mediaElement.controls = true;
+    mediaElement.preload = 'metadata';
+    mediaElement.addEventListener('ended', () => playNextInQueue(item));
+    stage.append(artwork);
   }
   stage.append(mediaElement);
 
@@ -730,7 +818,7 @@ async function renderPreview(item) {
   title.textContent = item.name;
   const kind = document.createElement('span');
   kind.className = 'preview-kind';
-  kind.textContent = item.kind === 'video' ? 'Видео' : 'Изображение';
+  kind.textContent = MEDIA_LABELS[item.kind];
 
   const list = document.createElement('dl');
   list.className = 'detail-list';
@@ -767,6 +855,9 @@ async function renderPreview(item) {
   details.append(title, kind, list, actions);
   active.append(stage, details);
   dom.preview.replaceChildren(active);
+  if (options.autoplay && mediaElement instanceof HTMLMediaElement) {
+    mediaElement.play().catch(() => {});
+  }
 
   try {
     const info = await window.lumina.getItemInfo(item.path);
@@ -831,8 +922,8 @@ async function deleteItem(item, fromModal = false) {
       state.selected = null;
       renderEmptyPreview();
     }
-    state.media = state.media.filter((media) => media.path !== item.path);
-    renderGallery();
+    state.allMedia = state.allMedia.filter((media) => media.path !== item.path);
+    applyMediaFilters({ resetScroll: false });
     showToast('Файл перемещён в Корзину');
     setTimeout(() => renderTree(), 100);
   } catch (error) {
@@ -934,6 +1025,13 @@ dom.confirmDeleteToggle.addEventListener('change', () => {
   state.confirmBeforeDelete = dom.confirmDeleteToggle.checked;
   localStorage.setItem('lumina:confirm-delete', String(state.confirmBeforeDelete));
 });
+dom.queueAutoplayToggle.addEventListener('change', () => {
+  state.queueAutoplay = dom.queueAutoplayToggle.checked;
+  localStorage.setItem('lumina:queue-autoplay', String(state.queueAutoplay));
+});
+dom.mediaFilters.forEach((button) => {
+  button.addEventListener('click', () => toggleMediaFilter(button.dataset.kind));
+});
 [dom.accentColor, dom.backgroundColor, dom.surfaceColor].forEach((input) => {
   input.addEventListener('input', applyThemeInputs);
 });
@@ -963,6 +1061,8 @@ bindResizer(dom.leftResizer, 'left');
 bindResizer(dom.rightResizer, 'right');
 
 dom.confirmDeleteToggle.checked = state.confirmBeforeDelete;
+dom.queueAutoplayToggle.checked = state.queueAutoplay;
+syncMediaFilters();
 
 let galleryScrollFrame;
 dom.galleryScroll.addEventListener('scroll', () => {
@@ -980,7 +1080,7 @@ galleryResizeObserver.observe(document.querySelector('#gallery-panel'));
 
 window.addEventListener('keydown', (event) => {
   const tag = event.target.tagName;
-  const isEditing = tag === 'INPUT' || tag === 'TEXTAREA';
+  const isEditing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'AUDIO' || tag === 'VIDEO';
   if (event.key === 'Escape' && !dom.deleteModal.classList.contains('hidden')) {
     closeDeleteModal();
     return;

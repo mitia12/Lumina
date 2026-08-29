@@ -12,6 +12,9 @@ const IMAGE_EXTENSIONS = new Set([
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.webm', '.mov', '.m4v', '.avi', '.mkv', '.wmv', '.mpeg', '.mpg', '.ogv', '.3gp'
 ]);
+const AUDIO_EXTENSIONS = new Set([
+  '.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.wma', '.aif', '.aiff'
+]);
 
 const MEDIA_TYPES = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
@@ -19,7 +22,10 @@ const MEDIA_TYPES = {
   '.ico': 'image/x-icon', '.tif': 'image/tiff', '.tiff': 'image/tiff', '.mp4': 'video/mp4',
   '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/x-m4v',
   '.avi': 'video/x-msvideo', '.mkv': 'video/x-matroska', '.wmv': 'video/x-ms-wmv',
-  '.mpeg': 'video/mpeg', '.mpg': 'video/mpeg', '.ogv': 'video/ogg', '.3gp': 'video/3gpp'
+  '.mpeg': 'video/mpeg', '.mpg': 'video/mpeg', '.ogv': 'video/ogg', '.3gp': 'video/3gpp',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.flac': 'audio/flac', '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg',
+  '.wma': 'audio/x-ms-wma', '.aif': 'audio/aiff', '.aiff': 'audio/aiff'
 };
 
 let mainWindow;
@@ -209,6 +215,7 @@ function mediaKind(fileName) {
   const extension = path.extname(fileName).toLowerCase();
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
+  if (AUDIO_EXTENSIONS.has(extension)) return 'audio';
   return null;
 }
 
@@ -330,12 +337,13 @@ async function servePreviewRequest(request) {
 function serializeEntry(parentPath, dirent) {
   const fullPath = path.join(parentPath, dirent.name);
   const kind = dirent.isDirectory() ? 'directory' : mediaKind(dirent.name);
+  const hasVisualThumbnail = kind === 'image' || kind === 'video';
   return {
     name: dirent.name,
     path: fullPath,
     kind,
-    url: kind === 'image' || kind === 'video' ? toMediaUrl(fullPath) : null,
-    thumbnailUrl: kind === 'image' || kind === 'video' ? toThumbnailUrl(fullPath) : null,
+    url: kind && kind !== 'directory' ? toMediaUrl(fullPath) : null,
+    thumbnailUrl: hasVisualThumbnail ? toThumbnailUrl(fullPath) : null,
     previewUrl: kind === 'video' ? toPreviewUrl(fullPath) : null
   };
 }
@@ -389,7 +397,7 @@ async function listMedia(directoryPath, recursive) {
           relativeDirectory: path.relative(safeDirectory, directory) || '.',
           kind,
           url: toMediaUrl(fullPath),
-          thumbnailUrl: toThumbnailUrl(fullPath),
+          thumbnailUrl: kind === 'image' || kind === 'video' ? toThumbnailUrl(fullPath) : null,
           previewUrl: kind === 'video' ? toPreviewUrl(fullPath) : null
         });
       }
@@ -427,7 +435,7 @@ function startRootWatcher() {
 
 async function chooseRoot() {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Открыть папку с фото и видео',
+    title: 'Открыть папку с фото, видео и аудио',
     properties: ['openDirectory']
   });
   if (result.canceled || !result.filePaths[0]) return null;
@@ -459,7 +467,8 @@ async function prepareMediaItems(sender, items, requestId) {
       try {
         const filePath = requireSafePath(item.path);
         const stat = await fs.stat(filePath);
-        const tasks = [ensureThumbnail(filePath, stat)];
+        const tasks = [];
+        if (item.kind === 'image' || item.kind === 'video') tasks.push(ensureThumbnail(filePath, stat));
         if (item.kind === 'video') tasks.push(ensureVideoPreview(filePath, stat));
         await Promise.all(tasks);
       } catch {
