@@ -1230,6 +1230,60 @@ body.resizing {
 .color-setting input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 .color-setting input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
 
+.behavior-settings {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.setting-toggle-row {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 15px;
+  background: rgba(255,255,255,.018);
+  cursor: pointer;
+}
+
+.setting-toggle-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.setting-toggle-copy strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.setting-toggle-copy small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.settings-switch-control {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.settings-switch-control input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-switch-control input:checked + .switch {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.settings-switch-control input:checked + .switch::after {
+  left: 17px;
+  background: var(--accent-ink);
+}
+
 .settings-actions {
   display: flex;
   justify-content: flex-end;

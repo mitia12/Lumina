@@ -47,6 +47,7 @@ const dom = {
   settingsClose: document.querySelector('#settings-close'),
   settingsDone: document.querySelector('#settings-done'),
   settingsReset: document.querySelector('#settings-reset'),
+  confirmDeleteToggle: document.querySelector('#confirm-delete-toggle'),
   accentColor: document.querySelector('#accent-color'),
   backgroundColor: document.querySelector('#background-color'),
   surfaceColor: document.querySelector('#surface-color'),
@@ -58,6 +59,7 @@ const dom = {
 };
 
 const storedTileSize = Number(localStorage.getItem('lumina:tile-size')) || 230;
+const storedConfirmDelete = localStorage.getItem('lumina:confirm-delete');
 const state = {
   root: null,
   currentDirectory: null,
@@ -67,6 +69,8 @@ const state = {
   autoplay: false,
   requestId: 0,
   pendingDelete: null,
+  confirmBeforeDelete: storedConfirmDelete === null ? true : storedConfirmDelete === 'true',
+  deletingPaths: new Set(),
   preparedPaths: new Set(),
   warmedPaths: new Set(),
   virtual: { columns: 1, cardWidth: 230, rowHeight: 240, start: -1, end: -1 },
@@ -796,6 +800,10 @@ function setAutoplay(enabled) {
 }
 
 function requestDelete(item) {
+  if (!state.confirmBeforeDelete) {
+    void deleteItem(item);
+    return;
+  }
   state.pendingDelete = item;
   dom.deleteDescription.textContent = `«${item.name}» исчезнет из исходной папки, но его можно будет восстановить из Корзины Windows.`;
   dom.deleteModal.classList.remove('hidden');
@@ -807,14 +815,16 @@ function closeDeleteModal() {
   dom.deleteModal.classList.add('hidden');
 }
 
-async function confirmDelete() {
-  const item = state.pendingDelete;
-  if (!item) return;
-  dom.deleteConfirm.disabled = true;
-  dom.deleteConfirm.textContent = 'Удаление…';
+async function deleteItem(item, fromModal = false) {
+  if (!item || state.deletingPaths.has(item.path)) return;
+  state.deletingPaths.add(item.path);
+  if (fromModal) {
+    dom.deleteConfirm.disabled = true;
+    dom.deleteConfirm.textContent = 'Удаление…';
+  }
   try {
     await window.lumina.moveToTrash(item.path);
-    closeDeleteModal();
+    if (fromModal) closeDeleteModal();
     state.preparedPaths.delete(item.path);
     state.warmedPaths.delete(item.path);
     if (state.selected?.path === item.path) {
@@ -828,9 +838,16 @@ async function confirmDelete() {
   } catch (error) {
     showToast(`Не удалось удалить файл: ${formatError(error)}`, 'error');
   } finally {
-    dom.deleteConfirm.disabled = false;
-    dom.deleteConfirm.textContent = 'В корзину';
+    state.deletingPaths.delete(item.path);
+    if (fromModal) {
+      dom.deleteConfirm.disabled = false;
+      dom.deleteConfirm.textContent = 'В корзину';
+    }
   }
+}
+
+async function confirmDelete() {
+  await deleteItem(state.pendingDelete, true);
 }
 
 function togglePanel(side, visible) {
@@ -913,6 +930,10 @@ dom.settingsButton.addEventListener('click', openSettings);
 dom.settingsClose.addEventListener('click', closeSettings);
 dom.settingsDone.addEventListener('click', closeSettings);
 dom.settingsReset.addEventListener('click', () => applyTheme(DEFAULT_THEME));
+dom.confirmDeleteToggle.addEventListener('change', () => {
+  state.confirmBeforeDelete = dom.confirmDeleteToggle.checked;
+  localStorage.setItem('lumina:confirm-delete', String(state.confirmBeforeDelete));
+});
 [dom.accentColor, dom.backgroundColor, dom.surfaceColor].forEach((input) => {
   input.addEventListener('input', applyThemeInputs);
 });
@@ -940,6 +961,8 @@ dom.deleteModal.addEventListener('click', (event) => {
 
 bindResizer(dom.leftResizer, 'left');
 bindResizer(dom.rightResizer, 'right');
+
+dom.confirmDeleteToggle.checked = state.confirmBeforeDelete;
 
 let galleryScrollFrame;
 dom.galleryScroll.addEventListener('scroll', () => {
