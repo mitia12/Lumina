@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('lumina', {
   createFolder: (directoryPath, folderName) => ipcRenderer.invoke('folder:create', directoryPath, folderName),
   readTextFile: (itemPath) => ipcRenderer.invoke('text:read', itemPath),
   writeTextFile: (itemPath, content) => ipcRenderer.invoke('text:write', itemPath, content),
+  startExternalDrag: (itemPath) => ipcRenderer.send('item:start-external-drag', itemPath),
+  onExternalDragEnded: (callback) => {
+    const listener = (_event, result) => callback(result);
+    ipcRenderer.on('item:external-drag-ended', listener);
+    return () => ipcRenderer.removeListener('item:external-drag-ended', listener);
+  },
   onFilesystemChanged: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('filesystem:changed', listener);

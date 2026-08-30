@@ -44,6 +44,7 @@ const previewJobsByKey = new Map();
 let activePreviewJobs = 0;
 let previewCacheDirectory = null;
 let thumbnailCacheDirectory = null;
+let externalDragIcon = null;
 const PREVIEW_CACHE_LIMIT = 1.5 * 1024 * 1024 * 1024;
 const THUMBNAIL_CACHE_LIMIT = 768 * 1024 * 1024;
 
@@ -557,6 +558,7 @@ app.whenReady().then(async () => {
     fs.mkdir(previewCacheDirectory, { recursive: true }),
     fs.mkdir(thumbnailCacheDirectory, { recursive: true })
   ]);
+  externalDragIcon = await app.getFileIcon(process.execPath, { size: 'large' }).catch(() => nativeImage.createEmpty());
   pruneCacheDirectory(previewCacheDirectory, '.webm', PREVIEW_CACHE_LIMIT).catch(() => {});
   pruneCacheDirectory(thumbnailCacheDirectory, '.jpg', THUMBNAIL_CACHE_LIMIT).catch(() => {});
   if (!app.isPackaged && process.env.LUMINA_TEST_ROOT) {
@@ -695,6 +697,29 @@ app.whenReady().then(async () => {
     await fs.writeFile(safePath, content, 'utf8');
     const updatedStat = await fs.stat(safePath);
     return { modifiedAt: updatedStat.mtimeMs, size: updatedStat.size };
+  });
+  ipcMain.on('item:start-external-drag', (event, itemPath) => {
+    let safePath;
+    try {
+      safePath = requireSafePath(itemPath);
+      event.sender.startDrag({ file: safePath, icon: externalDragIcon || nativeImage.createEmpty() });
+      fs.access(safePath).then(
+        () => {
+          if (!event.sender.isDestroyed()) event.sender.send('item:external-drag-ended', { path: safePath, sourceExists: true });
+        },
+        () => {
+          if (!event.sender.isDestroyed()) event.sender.send('item:external-drag-ended', { path: safePath, sourceExists: false });
+        }
+      );
+    } catch (error) {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('item:external-drag-ended', {
+          path: safePath || itemPath,
+          sourceExists: true,
+          error: error.message || String(error)
+        });
+      }
+    }
   });
 
   await createWindow();

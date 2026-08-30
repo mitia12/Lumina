@@ -4,6 +4,7 @@ const ICONS = {
   image: '<svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><circle cx="15.5" cy="8.5" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg>',
   video: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m10 9 5 3-5 3V9Z"/></svg>',
   audio: '<svg viewBox="0 0 24 24"><path d="M9 17.5V6l10-2v11.5M9 9l10-2"/><circle cx="6" cy="17.5" r="3"/><circle cx="16" cy="15.5" r="3"/></svg>',
+  text: '<svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4V20.5H6Z"/><path d="M14 3.5v4h4M9 11h6M9 14h6M9 17h4"/></svg>',
   file: '<svg viewBox="0 0 24 24"><path d="M12 2.8 14 4l2.4-.3.9 2.2 2.1 1.2-.5 2.4 1.4 2-1.4 2 .5 2.4-2.1 1.2-.9 2.2-2.4-.3-2 1.2-2-1.2-2.4.3-.9-2.2-2.1-1.2.5-2.4-1.4-2 1.4-2-.5-2.4 2.1-1.2.9-2.2L10 4l2-1.2Z"/><circle cx="12" cy="12" r="3"/></svg>',
   open: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>',
@@ -96,6 +97,8 @@ const state = {
   contextItem: null,
   nameAction: null,
   draggedItem: null,
+  externalDraggedItem: null,
+  externalDragStarted: false,
   moveInProgress: false,
   pendingDelete: null,
   confirmBeforeDelete: storedConfirmDelete === null ? true : storedConfirmDelete === 'true',
@@ -321,6 +324,7 @@ function createTreeNode(entry, depth, expanded = false) {
   row.style.setProperty('--depth', depth);
   row.dataset.rowPath = entry.path;
   row.dataset.kind = entry.kind;
+  row.classList.toggle('text-file-row', isTextFile(entry));
   row.title = entry.path;
 
   const chevron = document.createElement('button');
@@ -331,7 +335,7 @@ function createTreeNode(entry, depth, expanded = false) {
 
   const icon = document.createElement('span');
   icon.className = 'tree-icon';
-  icon.innerHTML = ICONS[entry.kind] || ICONS.image;
+  icon.innerHTML = isTextFile(entry) ? ICONS.text : (ICONS[entry.kind] || ICONS.image);
 
   const name = document.createElement('span');
   name.className = 'tree-name';
@@ -829,6 +833,8 @@ function createMediaCard(item) {
   card.tabIndex = 0;
   card.draggable = true;
   card.title = item.path;
+  const textFile = isTextFile(item);
+  if (textFile) card.classList.add('text-file-card');
   card.addEventListener('dragstart', (event) => {
     if (event.target.closest('button') || state.moveInProgress) {
       event.preventDefault();
@@ -871,6 +877,16 @@ function createMediaCard(item) {
     } else {
       card.classList.remove('loading-media');
     }
+  } else if (textFile) {
+    mediaElement = document.createElement('div');
+    mediaElement.className = 'text-card-visual';
+    const textType = /\.md$/i.test(item.name) ? 'MD' : 'TXT';
+    mediaElement.innerHTML = `
+      <span class="text-card-sheet">
+        <span class="text-card-type">${textType}</span>
+        <i></i><i></i><i></i><i></i>
+      </span>`;
+    card.classList.remove('loading-media');
   } else if (item.kind === 'file') {
     mediaElement = document.createElement('div');
     mediaElement.className = 'file-card-visual';
@@ -914,7 +930,9 @@ function createMediaCard(item) {
 
   const badge = document.createElement('span');
   badge.className = 'media-badge';
-  badge.innerHTML = `${ICONS[item.kind]}<span>${MEDIA_LABELS[item.kind]}</span>`;
+  const badgeIcon = textFile ? ICONS.text : ICONS[item.kind];
+  const badgeLabel = textFile ? (/\.md$/i.test(item.name) ? 'Markdown' : 'Текст') : MEDIA_LABELS[item.kind];
+  badge.innerHTML = `${badgeIcon}<span>${badgeLabel}</span>`;
 
   const remove = document.createElement('button');
   remove.className = 'card-delete';
@@ -935,7 +953,9 @@ function createMediaCard(item) {
   name.textContent = item.name;
   const location = document.createElement('div');
   location.className = 'media-path';
-  location.textContent = state.recursive && item.relativeDirectory !== '.' ? item.relativeDirectory : MEDIA_LABELS[item.kind];
+  location.textContent = state.recursive && item.relativeDirectory !== '.'
+    ? item.relativeDirectory
+    : (textFile ? 'Редактируемый текст' : MEDIA_LABELS[item.kind]);
   caption.append(name, location);
   card.append(frame, caption);
 
@@ -1076,7 +1096,9 @@ async function renderPreview(item, options = {}) {
   title.textContent = item.name;
   const kind = document.createElement('span');
   kind.className = 'preview-kind';
-  kind.textContent = MEDIA_LABELS[item.kind];
+  kind.textContent = isTextFile(item)
+    ? (/\.md$/i.test(item.name) ? 'Markdown · MD' : 'Текст · TXT')
+    : MEDIA_LABELS[item.kind];
 
   const list = document.createElement('dl');
   list.className = 'detail-list';
@@ -1597,3 +1619,52 @@ window.lumina.onPrepareProgress((progress) => {
   dom.loadingProgressBar.style.width = `${percent}%`;
   dom.loadingProgressText.textContent = `${progress.completed} / ${progress.total} файлов${progress.errors ? ` · ошибок: ${progress.errors}` : ''}`;
 });
+
+window.lumina.onExternalDragEnded(async (result) => {
+  const item = state.externalDraggedItem?.path === result.path
+    ? state.externalDraggedItem
+    : state.allMedia.find((entry) => entry.path === result.path);
+  state.externalDraggedItem = null;
+  state.externalDragStarted = false;
+  resetFileDragState();
+  if (result.error) {
+    showToast(`Не удалось передать файл Windows: ${result.error}`, 'error');
+    return;
+  }
+  if (!item) return;
+  if (!result.sourceExists) {
+    state.preparedPaths.delete(item.path);
+    state.warmedPaths.delete(item.path);
+    state.allMedia = state.allMedia.filter((entry) => entry.path !== item.path);
+    if (state.selected?.path === item.path) {
+      state.selected = null;
+      renderEmptyPreview();
+    }
+    applyMediaFilters({ resetScroll: false });
+    await refreshTreeDirectory(parentPath(item.path));
+    showToast('Файл перемещён через Windows');
+    return;
+  }
+});
+
+function beginExternalDragAtWindowEdge() {
+  if (!state.draggedItem || state.externalDragStarted || state.moveInProgress) return;
+  state.externalDragStarted = true;
+  state.externalDraggedItem = state.draggedItem;
+  window.lumina.startExternalDrag(state.draggedItem.path);
+}
+
+window.addEventListener('dragover', (event) => {
+  if (!state.draggedItem || state.externalDragStarted) return;
+  const edge = 3;
+  const atWindowEdge = event.clientX <= edge
+    || event.clientY <= edge
+    || event.clientX >= window.innerWidth - edge
+    || event.clientY >= window.innerHeight - edge;
+  if (atWindowEdge) beginExternalDragAtWindowEdge();
+}, true);
+
+window.addEventListener('dragleave', (event) => {
+  if (!state.draggedItem || state.externalDragStarted || event.relatedTarget) return;
+  beginExternalDragAtWindowEdge();
+}, true);
