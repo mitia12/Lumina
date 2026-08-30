@@ -64,7 +64,16 @@ const dom = {
   contextMenu: document.querySelector('#file-context-menu'),
   contextOpenDefault: document.querySelector('#context-open-default'),
   contextReveal: document.querySelector('#context-reveal'),
+  contextRename: document.querySelector('#context-rename'),
+  contextCreateFolder: document.querySelector('#context-create-folder'),
   contextDelete: document.querySelector('#context-delete'),
+  nameModal: document.querySelector('#name-modal'),
+  nameForm: document.querySelector('#name-form'),
+  nameTitle: document.querySelector('#name-modal-title'),
+  nameDescription: document.querySelector('#name-modal-description'),
+  nameInput: document.querySelector('#name-input'),
+  nameCancel: document.querySelector('#name-cancel'),
+  nameSubmit: document.querySelector('#name-submit'),
   deleteModal: document.querySelector('#delete-modal'),
   deleteDescription: document.querySelector('#delete-description'),
   deleteCancel: document.querySelector('#delete-cancel'),
@@ -85,6 +94,7 @@ const state = {
   autoplay: false,
   requestId: 0,
   contextItem: null,
+  nameAction: null,
   draggedItem: null,
   moveInProgress: false,
   pendingDelete: null,
@@ -254,6 +264,15 @@ function isPathWithinDirectory(candidatePath, directoryPath) {
   return candidate === directory || candidate.startsWith(`${directory}\\`);
 }
 
+function replacePathPrefix(candidatePath, oldPath, newPath) {
+  if (!isPathWithinDirectory(candidatePath, oldPath)) return candidatePath;
+  return newPath + candidatePath.slice(oldPath.length);
+}
+
+function isTextFile(item) {
+  return item?.kind === 'file' && /\.(txt|md)$/i.test(item.name || '');
+}
+
 function setGalleryView(view) {
   dom.emptyState.classList.toggle('hidden', view !== 'welcome');
   dom.loadingState.classList.toggle('hidden', view !== 'loading');
@@ -379,8 +398,8 @@ function createTreeNode(entry, depth, expanded = false) {
     });
   } else {
     row.addEventListener('click', () => selectMedia(entry));
-    row.addEventListener('contextmenu', (event) => showFileContextMenu(event, entry));
   }
+  row.addEventListener('contextmenu', (event) => showFileContextMenu(event, entry));
   return node;
 }
 
@@ -432,6 +451,21 @@ async function refreshTreeAfterMove(sourcePath, destinationPath) {
   delete children.dataset.loaded;
   children.replaceChildren();
   await expandTreeNode({ path: destinationPath, kind: 'directory' }, chevron, children, depth + 1);
+}
+
+async function refreshTreeDirectory(directoryPath) {
+  const directoryNode = [...dom.tree.querySelectorAll('.tree-node')]
+    .find((node) => normalizeComparablePath(node.dataset.path) === normalizeComparablePath(directoryPath));
+  if (!directoryNode) return;
+  const children = directoryNode.querySelector(':scope > .tree-children');
+  const row = directoryNode.querySelector(':scope > .tree-row');
+  const chevron = row?.querySelector('.tree-chevron');
+  if (!children || !row || !chevron || children.dataset.loaded !== 'true') return;
+  const depth = Number(row.style.getPropertyValue('--depth')) || 0;
+  delete children.dataset.loaded;
+  children.replaceChildren();
+  await expandTreeNode({ path: directoryPath, kind: 'directory' }, chevron, children, depth + 1);
+  updateSelectionClasses();
 }
 
 async function moveItemToDirectory(item, destinationPath) {
@@ -997,6 +1031,35 @@ async function renderPreview(item, options = {}) {
     mediaElement.preload = 'metadata';
     mediaElement.addEventListener('ended', () => playNextInQueue(item));
     stage.append(artwork);
+  } else if (isTextFile(item)) {
+    stage.classList.add('text-editor-stage');
+    const editor = document.createElement('textarea');
+    editor.className = 'text-editor';
+    editor.placeholder = 'Загрузка текста…';
+    editor.setAttribute('aria-label', `Редактор файла ${item.name}`);
+    editor.disabled = true;
+    editor.addEventListener('contextmenu', (event) => event.stopPropagation());
+    const editorFooter = document.createElement('div');
+    editorFooter.className = 'text-editor-footer';
+    const editorStatus = document.createElement('span');
+    editorStatus.className = 'text-editor-status';
+    editorStatus.textContent = 'Загрузка…';
+    const editorButtons = document.createElement('div');
+    editorButtons.className = 'text-editor-buttons';
+    const discardText = document.createElement('button');
+    discardText.className = 'button ghost';
+    discardText.type = 'button';
+    discardText.textContent = 'Отменить изменения';
+    discardText.disabled = true;
+    const saveText = document.createElement('button');
+    saveText.className = 'button primary';
+    saveText.type = 'button';
+    saveText.textContent = 'Сохранить';
+    saveText.disabled = true;
+    editorButtons.append(discardText, saveText);
+    editorFooter.append(editorStatus, editorButtons);
+    stage.append(editor, editorFooter);
+    mediaElement = { editor, editorStatus, discardText, saveText, originalText: '' };
   } else {
     stage.classList.add('file-preview-stage');
     const artwork = document.createElement('div');
@@ -1004,7 +1067,7 @@ async function renderPreview(item, options = {}) {
     artwork.innerHTML = `${ICONS.file}<span>Файл</span>`;
     stage.append(artwork);
   }
-  if (mediaElement) stage.append(mediaElement);
+  if (mediaElement instanceof HTMLMediaElement || mediaElement instanceof HTMLImageElement) stage.append(mediaElement);
 
   const details = document.createElement('div');
   details.className = 'preview-details';
@@ -1051,6 +1114,62 @@ async function renderPreview(item, options = {}) {
   active.append(stage, details);
   active.addEventListener('contextmenu', (event) => showFileContextMenu(event, item));
   dom.preview.replaceChildren(active);
+  if (isTextFile(item)) {
+    const textEditor = mediaElement;
+    const setEditorState = () => {
+      const dirty = textEditor.editor.value !== textEditor.originalText;
+      textEditor.saveText.disabled = !dirty;
+      textEditor.discardText.disabled = !dirty;
+      textEditor.editorStatus.textContent = dirty ? 'Есть несохранённые изменения' : 'Все изменения сохранены';
+      textEditor.editorStatus.classList.toggle('dirty', dirty);
+    };
+    const saveEditor = async () => {
+      if (textEditor.saveText.disabled) return;
+      textEditor.saveText.disabled = true;
+      textEditor.discardText.disabled = true;
+      textEditor.editorStatus.textContent = 'Сохранение…';
+      try {
+        const result = await window.lumina.writeTextFile(item.path, textEditor.editor.value);
+        if (!textEditor.editor.isConnected || state.selected?.path !== item.path) return;
+        textEditor.originalText = textEditor.editor.value;
+        size.value.textContent = formatBytes(result.size);
+        modified.value.textContent = formatDate(result.modifiedAt);
+        setEditorState();
+        showToast('Изменения сохранены');
+      } catch (error) {
+        if (textEditor.editor.isConnected) setEditorState();
+        showToast(`Не удалось сохранить файл: ${formatError(error)}`, 'error');
+      }
+    };
+    textEditor.editor.addEventListener('input', setEditorState);
+    textEditor.editor.addEventListener('keydown', (event) => {
+      if (event.ctrlKey && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        void saveEditor();
+      }
+    });
+    textEditor.discardText.addEventListener('click', () => {
+      textEditor.editor.value = textEditor.originalText;
+      setEditorState();
+      textEditor.editor.focus();
+    });
+    textEditor.saveText.addEventListener('click', () => void saveEditor());
+    try {
+      const result = await window.lumina.readTextFile(item.path);
+      if (!textEditor.editor.isConnected || state.selected?.path !== item.path) return;
+      textEditor.originalText = result.text;
+      textEditor.editor.value = result.text;
+      textEditor.editor.disabled = false;
+      textEditor.editor.placeholder = '';
+      size.value.textContent = formatBytes(result.size);
+      modified.value.textContent = formatDate(result.modifiedAt);
+      setEditorState();
+    } catch (error) {
+      textEditor.editorStatus.textContent = 'Не удалось открыть файл';
+      textEditor.editor.placeholder = formatError(error);
+      showToast(`Не удалось открыть текст: ${formatError(error)}`, 'error');
+    }
+  }
   if (options.autoplay && mediaElement instanceof HTMLMediaElement) {
     mediaElement.play().catch(() => {});
   }
@@ -1091,6 +1210,12 @@ function showFileContextMenu(event, item) {
     return;
   }
   state.contextItem = item;
+  const isRoot = normalizeComparablePath(item.path) === normalizeComparablePath(state.root?.path);
+  dom.contextRename.disabled = isRoot;
+  dom.contextDelete.disabled = isRoot;
+  dom.contextCreateFolder.querySelector('span').textContent = item.kind === 'directory'
+    ? 'Создать папку внутри'
+    : 'Создать новую папку';
   dom.contextMenu.classList.remove('hidden');
   const menuWidth = dom.contextMenu.offsetWidth;
   const menuHeight = dom.contextMenu.offsetHeight;
@@ -1099,6 +1224,73 @@ function showFileContextMenu(event, item) {
   dom.contextMenu.style.left = `${left}px`;
   dom.contextMenu.style.top = `${top}px`;
   dom.contextOpenDefault.focus();
+}
+
+function openNameModal(mode, item) {
+  if (!item) return;
+  state.nameAction = { mode, item };
+  const isRename = mode === 'rename';
+  dom.nameTitle.textContent = isRename ? 'Переименовать' : 'Создать новую папку';
+  dom.nameDescription.textContent = isRename
+    ? `Введите новое имя для «${item.name}».`
+    : `Папка будет создана в «${item.kind === 'directory' ? item.name : parentPath(item.path).split(/[\\/]/).pop()}».`;
+  dom.nameInput.value = isRename ? item.name : 'Новая папка';
+  dom.nameSubmit.textContent = isRename ? 'Переименовать' : 'Создать';
+  dom.nameModal.classList.remove('hidden');
+  dom.nameInput.focus();
+  if (isRename) {
+    const extensionIndex = item.kind === 'directory' ? -1 : item.name.lastIndexOf('.');
+    dom.nameInput.setSelectionRange(0, extensionIndex > 0 ? extensionIndex : item.name.length);
+  } else {
+    dom.nameInput.select();
+  }
+}
+
+function closeNameModal() {
+  state.nameAction = null;
+  dom.nameModal.classList.add('hidden');
+  dom.nameSubmit.disabled = false;
+}
+
+async function submitNameAction(event) {
+  event.preventDefault();
+  const action = state.nameAction;
+  if (!action || !dom.nameInput.value.trim()) return;
+  dom.nameSubmit.disabled = true;
+  try {
+    if (action.mode === 'create-folder') {
+      const directoryPath = action.item.kind === 'directory' ? action.item.path : parentPath(action.item.path);
+      const created = await window.lumina.createFolder(directoryPath, dom.nameInput.value);
+      closeNameModal();
+      await refreshTreeDirectory(directoryPath);
+      showToast(`Папка «${created.name}» создана`);
+      return;
+    }
+
+    const oldPath = action.item.path;
+    const selectedPath = state.selected?.path;
+    const result = await window.lumina.renameItem(oldPath, dom.nameInput.value);
+    closeNameModal();
+    if (!result.renamed) return;
+    if (isPathWithinDirectory(state.currentDirectory, oldPath)) {
+      state.currentDirectory = replacePathPrefix(state.currentDirectory, oldPath, result.path);
+    }
+    const nextSelectedPath = selectedPath && isPathWithinDirectory(selectedPath, oldPath)
+      ? replacePathPrefix(selectedPath, oldPath, result.path)
+      : selectedPath;
+    state.selected = null;
+    state.preparedPaths = new Set();
+    state.warmedPaths = new Set();
+    await refreshTreeDirectory(parentPath(oldPath));
+    await loadMedia();
+    const nextSelected = state.allMedia.find((entry) => entry.path === nextSelectedPath);
+    if (nextSelected) selectMedia(nextSelected);
+    showToast(`Переименовано в «${result.name}»`);
+  } catch (error) {
+    showToast(`Не удалось выполнить операцию: ${formatError(error)}`, 'error');
+    dom.nameSubmit.disabled = false;
+    dom.nameInput.focus();
+  }
 }
 
 function createDetailRow(label, initialValue) {
@@ -1125,7 +1317,9 @@ function requestDelete(item) {
     return;
   }
   state.pendingDelete = item;
-  dom.deleteDescription.textContent = `«${item.name}» исчезнет из исходной папки, но его можно будет восстановить из Корзины Windows.`;
+  dom.deleteDescription.textContent = item.kind === 'directory'
+    ? `Папка «${item.name}» и всё её содержимое будут перемещены в Корзину Windows.`
+    : `«${item.name}» исчезнет из исходной папки, но его можно будет восстановить из Корзины Windows.`;
   dom.deleteModal.classList.remove('hidden');
   dom.deleteConfirm.focus();
 }
@@ -1147,14 +1341,17 @@ async function deleteItem(item, fromModal = false) {
     if (fromModal) closeDeleteModal();
     state.preparedPaths.delete(item.path);
     state.warmedPaths.delete(item.path);
-    if (state.selected?.path === item.path) {
+    if (state.selected && isPathWithinDirectory(state.selected.path, item.path)) {
       state.selected = null;
       renderEmptyPreview();
     }
-    state.allMedia = state.allMedia.filter((media) => media.path !== item.path);
+    const removedCurrentDirectory = item.kind === 'directory' && isPathWithinDirectory(state.currentDirectory, item.path);
+    if (removedCurrentDirectory) state.currentDirectory = parentPath(item.path);
+    state.allMedia = state.allMedia.filter((media) => !isPathWithinDirectory(media.path, item.path));
     applyMediaFilters({ resetScroll: false });
-    showToast('Файл перемещён в Корзину');
-    setTimeout(() => renderTree(), 100);
+    showToast(item.kind === 'directory' ? 'Папка перемещена в Корзину' : 'Файл перемещён в Корзину');
+    await refreshTreeDirectory(parentPath(item.path));
+    if (removedCurrentDirectory) await loadMedia();
   } catch (error) {
     showToast(`Не удалось удалить файл: ${formatError(error)}`, 'error');
   } finally {
@@ -1276,10 +1473,25 @@ dom.contextReveal.addEventListener('click', async () => {
     showToast(`Не удалось открыть папку: ${formatError(error)}`, 'error');
   }
 });
+dom.contextRename.addEventListener('click', () => {
+  const item = state.contextItem;
+  hideFileContextMenu();
+  if (item) openNameModal('rename', item);
+});
+dom.contextCreateFolder.addEventListener('click', () => {
+  const item = state.contextItem;
+  hideFileContextMenu();
+  if (item) openNameModal('create-folder', item);
+});
 dom.contextDelete.addEventListener('click', () => {
   const item = state.contextItem;
   hideFileContextMenu();
   if (item) requestDelete(item);
+});
+dom.nameCancel.addEventListener('click', closeNameModal);
+dom.nameForm.addEventListener('submit', submitNameAction);
+dom.nameModal.addEventListener('click', (event) => {
+  if (event.target === dom.nameModal) closeNameModal();
 });
 window.addEventListener('pointerdown', (event) => {
   if (!dom.contextMenu.classList.contains('hidden') && !dom.contextMenu.contains(event.target)) hideFileContextMenu();
@@ -1343,11 +1555,15 @@ window.addEventListener('keydown', (event) => {
     closeDeleteModal();
     return;
   }
+  if (event.key === 'Escape' && !dom.nameModal.classList.contains('hidden')) {
+    closeNameModal();
+    return;
+  }
   if (event.key === 'Escape' && !dom.settingsModal.classList.contains('hidden')) {
     closeSettings();
     return;
   }
-  if (isEditing || !dom.deleteModal.classList.contains('hidden') || !dom.settingsModal.classList.contains('hidden')) return;
+  if (isEditing || !dom.deleteModal.classList.contains('hidden') || !dom.nameModal.classList.contains('hidden') || !dom.settingsModal.classList.contains('hidden')) return;
   if (event.ctrlKey && event.key.toLowerCase() === 'o') {
     event.preventDefault();
     openFolder();

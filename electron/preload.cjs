@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('lumina', {
   revealItem: (itemPath) => ipcRenderer.invoke('item:reveal', itemPath),
   openItem: (itemPath) => ipcRenderer.invoke('item:open-default', itemPath),
   moveItem: (itemPath, destinationPath, viewDirectoryPath) => ipcRenderer.invoke('item:move', itemPath, destinationPath, viewDirectoryPath),
+  renameItem: (itemPath, newName) => ipcRenderer.invoke('item:rename', itemPath, newName),
+  createFolder: (directoryPath, folderName) => ipcRenderer.invoke('folder:create', directoryPath, folderName),
+  readTextFile: (itemPath) => ipcRenderer.invoke('text:read', itemPath),
+  writeTextFile: (itemPath, content) => ipcRenderer.invoke('text:write', itemPath, content),
   onFilesystemChanged: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('filesystem:changed', listener);

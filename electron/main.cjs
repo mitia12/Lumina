@@ -15,6 +15,8 @@ const VIDEO_EXTENSIONS = new Set([
 const AUDIO_EXTENSIONS = new Set([
   '.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.wma', '.aif', '.aiff'
 ]);
+const TEXT_EXTENSIONS = new Set(['.txt', '.md']);
+const MAX_TEXT_FILE_SIZE = 10 * 1024 * 1024;
 
 const MEDIA_TYPES = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
@@ -209,6 +211,34 @@ function requireSafePath(targetPath) {
     throw new Error('Путь находится за пределами открытой папки.');
   }
   return path.resolve(targetPath);
+}
+
+function pathsEqual(left, right) {
+  return process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
+function validateEntryName(value) {
+  if (typeof value !== 'string') throw new Error('Введите имя.');
+  const name = value.trim();
+  if (!name || name === '.' || name === '..') throw new Error('Введите корректное имя.');
+  if (/[<>:"/\\|?*\u0000-\u001f]/.test(name) || /[. ]$/.test(name)) {
+    throw new Error('Имя содержит недопустимые для Windows символы.');
+  }
+  const baseName = name.split('.')[0].toUpperCase();
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(baseName)) {
+    throw new Error('Это имя зарезервировано Windows.');
+  }
+  return name;
+}
+
+function requireTextPath(itemPath) {
+  const safePath = requireSafePath(itemPath);
+  if (!TEXT_EXTENSIONS.has(path.extname(safePath).toLowerCase())) {
+    throw new Error('Встроенный редактор поддерживает только TXT и MD.');
+  }
+  return safePath;
 }
 
 function mediaKind(fileName) {
@@ -554,6 +584,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('item:trash', async (_event, itemPath) => {
     const safePath = requireSafePath(itemPath);
+    if (pathsEqual(safePath, path.resolve(currentRoot))) {
+      throw new Error('Нельзя удалить открытую корневую папку.');
+    }
     await shell.trashItem(safePath);
     return true;
   });
@@ -577,9 +610,7 @@ app.whenReady().then(async () => {
 
     const fileName = path.basename(safeItemPath);
     const targetPath = requireSafePath(path.join(safeDestinationPath, fileName));
-    const samePath = process.platform === 'win32'
-      ? safeItemPath.toLowerCase() === targetPath.toLowerCase()
-      : safeItemPath === targetPath;
+    const samePath = pathsEqual(safeItemPath, targetPath);
     const kind = mediaKind(fileName) || 'file';
     const serializeMovedItem = () => ({
       name: fileName,
@@ -602,6 +633,68 @@ app.whenReady().then(async () => {
 
     await fs.rename(safeItemPath, targetPath);
     return { moved: true, item: serializeMovedItem() };
+  });
+  ipcMain.handle('item:rename', async (_event, itemPath, newNameValue) => {
+    const safeItemPath = requireSafePath(itemPath);
+    if (pathsEqual(safeItemPath, path.resolve(currentRoot))) {
+      throw new Error('Нельзя переименовать открытую корневую папку.');
+    }
+    const newName = validateEntryName(newNameValue);
+    const parentDirectory = path.dirname(safeItemPath);
+    const targetPath = requireSafePath(path.join(parentDirectory, newName));
+    if (safeItemPath === targetPath) return { renamed: false, path: safeItemPath, name: path.basename(safeItemPath) };
+
+    if (!pathsEqual(safeItemPath, targetPath)) {
+      try {
+        await fs.access(targetPath);
+        throw new Error(`Элемент «${newName}» уже существует.`);
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+    }
+    await fs.rename(safeItemPath, targetPath);
+    const stat = await fs.stat(targetPath);
+    return {
+      renamed: true,
+      name: newName,
+      path: targetPath,
+      kind: stat.isDirectory() ? 'directory' : (mediaKind(newName) || 'file')
+    };
+  });
+  ipcMain.handle('folder:create', async (_event, directoryPath, folderNameValue) => {
+    const safeDirectoryPath = requireSafePath(directoryPath);
+    const stat = await fs.stat(safeDirectoryPath);
+    if (!stat.isDirectory()) throw new Error('Новая папка может быть создана только внутри папки.');
+    const folderName = validateEntryName(folderNameValue);
+    const folderPath = requireSafePath(path.join(safeDirectoryPath, folderName));
+    try {
+      await fs.mkdir(folderPath);
+    } catch (error) {
+      if (error.code === 'EEXIST') throw new Error(`Элемент «${folderName}» уже существует.`);
+      throw error;
+    }
+    return { name: folderName, path: folderPath, kind: 'directory' };
+  });
+  ipcMain.handle('text:read', async (_event, itemPath) => {
+    const safePath = requireTextPath(itemPath);
+    const stat = await fs.stat(safePath);
+    if (!stat.isFile()) throw new Error('Выбранный элемент не является файлом.');
+    if (stat.size > MAX_TEXT_FILE_SIZE) throw new Error('Файл слишком большой для редактора (максимум 10 МБ).');
+    const buffer = await fs.readFile(safePath);
+    const text = buffer.toString('utf8').replace(/^\uFEFF/, '');
+    return { text, modifiedAt: stat.mtimeMs, size: stat.size };
+  });
+  ipcMain.handle('text:write', async (_event, itemPath, content) => {
+    const safePath = requireTextPath(itemPath);
+    if (typeof content !== 'string') throw new Error('Некорректное содержимое файла.');
+    if (Buffer.byteLength(content, 'utf8') > MAX_TEXT_FILE_SIZE) {
+      throw new Error('Текст превышает допустимый размер 10 МБ.');
+    }
+    const stat = await fs.stat(safePath);
+    if (!stat.isFile()) throw new Error('Выбранный элемент не является файлом.');
+    await fs.writeFile(safePath, content, 'utf8');
+    const updatedStat = await fs.stat(safePath);
+    return { modifiedAt: updatedStat.mtimeMs, size: updatedStat.size };
   });
 
   await createWindow();
