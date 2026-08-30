@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('lumina', {
   moveToTrash: (itemPath) => ipcRenderer.invoke('item:trash', itemPath),
   revealItem: (itemPath) => ipcRenderer.invoke('item:reveal', itemPath),
   openItem: (itemPath) => ipcRenderer.invoke('item:open-default', itemPath),
+  moveItem: (itemPath, destinationPath, viewDirectoryPath) => ipcRenderer.invoke('item:move', itemPath, destinationPath, viewDirectoryPath),
   onFilesystemChanged: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('filesystem:changed', listener);

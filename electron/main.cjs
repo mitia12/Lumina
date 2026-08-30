@@ -568,6 +568,41 @@ app.whenReady().then(async () => {
     if (errorMessage) throw new Error(errorMessage);
     return true;
   });
+  ipcMain.handle('item:move', async (_event, itemPath, destinationPath, viewDirectoryPath) => {
+    const safeItemPath = requireSafePath(itemPath);
+    const safeDestinationPath = requireSafePath(destinationPath);
+    const safeViewDirectoryPath = requireSafePath(viewDirectoryPath);
+    const destinationStat = await fs.stat(safeDestinationPath);
+    if (!destinationStat.isDirectory()) throw new Error('Цель перемещения не является папкой.');
+
+    const fileName = path.basename(safeItemPath);
+    const targetPath = requireSafePath(path.join(safeDestinationPath, fileName));
+    const samePath = process.platform === 'win32'
+      ? safeItemPath.toLowerCase() === targetPath.toLowerCase()
+      : safeItemPath === targetPath;
+    const kind = mediaKind(fileName) || 'file';
+    const serializeMovedItem = () => ({
+      name: fileName,
+      path: targetPath,
+      directory: safeDestinationPath,
+      relativeDirectory: path.relative(safeViewDirectoryPath, safeDestinationPath) || '.',
+      kind,
+      url: toMediaUrl(targetPath),
+      thumbnailUrl: kind === 'image' || kind === 'video' || kind === 'audio' ? toThumbnailUrl(targetPath) : null,
+      previewUrl: kind === 'video' ? toPreviewUrl(targetPath) : null
+    });
+    if (samePath) return { moved: false, item: serializeMovedItem() };
+
+    try {
+      await fs.access(targetPath);
+      throw new Error(`В папке «${path.basename(safeDestinationPath)}» уже есть файл «${fileName}».`);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+
+    await fs.rename(safeItemPath, targetPath);
+    return { moved: true, item: serializeMovedItem() };
+  });
 
   await createWindow();
   app.on('activate', () => {
