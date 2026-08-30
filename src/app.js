@@ -440,19 +440,19 @@ function mediaListsEqual(left, right) {
   ));
 }
 
-function isAnimatedGif(item) {
-  return item?.kind === 'image' && /\.gif$/i.test(item.name || '');
+function isAnimatedImage(item) {
+  return item?.kind === 'image' && /\.(gif|webp)$/i.test(item.name || '');
 }
 
 function isAutoplayMedia(item) {
-  return item?.kind === 'video' || isAnimatedGif(item);
+  return item?.kind === 'video' || isAnimatedImage(item);
 }
 
 async function warmMediaCache(items, requestId, quiet) {
   const resources = items.flatMap((item) => (
     item.kind === 'video'
       ? [item.thumbnailUrl, item.previewUrl]
-      : isAnimatedGif(item) ? [item.thumbnailUrl, item.url] : [item.thumbnailUrl]
+      : isAnimatedImage(item) ? [item.thumbnailUrl, item.url] : [item.thumbnailUrl]
   )).filter(Boolean);
   let nextIndex = 0;
   let completed = 0;
@@ -682,8 +682,8 @@ function createMediaCard(item) {
   const frame = document.createElement('div');
   frame.className = 'media-frame';
   let mediaElement;
-  const animatedGif = isAnimatedGif(item);
-  const useThumbnail = (item.kind !== 'video' && !animatedGif) || !state.autoplay;
+  const animatedImage = isAnimatedImage(item);
+  const useThumbnail = (item.kind !== 'video' && !animatedImage) || !state.autoplay;
   if (item.kind === 'audio') {
     mediaElement = document.createElement('div');
     mediaElement.className = 'audio-card-visual';
@@ -727,7 +727,7 @@ function createMediaCard(item) {
         card.classList.remove('loading-media');
       }
     });
-  } else if (animatedGif) {
+  } else if (animatedImage) {
     mediaElement = document.createElement('img');
     mediaElement.src = item.url;
     mediaElement.alt = item.name;
@@ -985,7 +985,7 @@ function createDetailRow(label, initialValue) {
 function setAutoplay(enabled) {
   state.autoplay = Boolean(enabled && state.media.some(isAutoplayMedia));
   dom.playAll.classList.toggle('active', state.autoplay);
-  dom.playAllLabel.textContent = state.autoplay ? 'Видео/GIF: вкл.' : 'Видео/GIF: выкл.';
+  dom.playAllLabel.textContent = state.autoplay ? 'Видео/GIF/WebP: вкл.' : 'Видео/GIF/WebP: выкл.';
   if (state.media.length) renderVirtualWindow(true);
 }
 
