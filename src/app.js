@@ -276,6 +276,20 @@ function isTextFile(item) {
   return item?.kind === 'file' && /\.(txt|md)$/i.test(item.name || '');
 }
 
+function isExternalFileDrag(event) {
+  return !state.draggedItem && Array.from(event.dataTransfer?.types || []).includes('Files');
+}
+
+function clearExternalDropTargets() {
+  dom.galleryScroll.classList.remove('external-drop-target');
+  dom.tree.classList.remove('external-drop-target');
+  document.querySelectorAll('.tree-row.external-drop-target').forEach((row) => row.classList.remove('external-drop-target'));
+}
+
+function droppedFilePaths(fileList) {
+  return Array.from(fileList || [], (file) => window.lumina.getDroppedFilePath(file)).filter(Boolean);
+}
+
 function setGalleryView(view) {
   dom.emptyState.classList.toggle('hidden', view !== 'welcome');
   dom.loadingState.classList.toggle('hidden', view !== 'loading');
@@ -371,9 +385,9 @@ function createTreeNode(entry, depth, expanded = false) {
       row.dragExpandTimer = null;
     };
     row.addEventListener('dragenter', (event) => {
-      if (!state.draggedItem || state.moveInProgress) return;
+      if ((!state.draggedItem && !isExternalFileDrag(event)) || state.moveInProgress) return;
       event.preventDefault();
-      row.classList.add('drop-target');
+      row.classList.add(state.draggedItem ? 'drop-target' : 'external-drop-target');
       clearDragExpand();
       row.dragExpandTimer = setTimeout(() => {
         children.classList.remove('hidden');
@@ -381,24 +395,30 @@ function createTreeNode(entry, depth, expanded = false) {
       }, 650);
     });
     row.addEventListener('dragover', (event) => {
-      if (!state.draggedItem || state.moveInProgress) return;
+      if ((!state.draggedItem && !isExternalFileDrag(event)) || state.moveInProgress) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
-      row.classList.add('drop-target');
+      row.classList.add(state.draggedItem ? 'drop-target' : 'external-drop-target');
     });
     row.addEventListener('dragleave', (event) => {
       if (row.contains(event.relatedTarget)) return;
       clearDragExpand();
-      row.classList.remove('drop-target');
+      row.classList.remove('drop-target', 'external-drop-target');
     });
     row.addEventListener('drop', (event) => {
-      if (!state.draggedItem || state.moveInProgress) return;
+      const externalPaths = isExternalFileDrag(event) ? droppedFilePaths(event.dataTransfer.files) : [];
+      if ((!state.draggedItem && !externalPaths.length) || state.moveInProgress) return;
       event.preventDefault();
       event.stopPropagation();
-      const item = state.draggedItem;
       clearDragExpand();
-      resetFileDragState();
-      void moveItemToDirectory(item, entry.path);
+      if (state.draggedItem) {
+        const item = state.draggedItem;
+        resetFileDragState();
+        void moveItemToDirectory(item, entry.path);
+      } else {
+        clearExternalDropTargets();
+        void importExternalFilesToDirectory(externalPaths, entry.path);
+      }
     });
   } else {
     row.addEventListener('click', () => selectMedia(entry));
@@ -436,6 +456,35 @@ function resetFileDragState() {
     row.classList.remove('drop-target');
   });
   document.querySelectorAll('.media-card.dragging').forEach((card) => card.classList.remove('dragging'));
+}
+
+async function importExternalFilesToDirectory(sourcePaths, destinationPath) {
+  if (!sourcePaths.length || !destinationPath || state.moveInProgress) return;
+  state.moveInProgress = true;
+  try {
+    const result = await window.lumina.importExternalFiles(sourcePaths, destinationPath);
+    await refreshTreeDirectory(destinationPath);
+    const destinationVisible = state.recursive
+      ? isPathWithinDirectory(destinationPath, state.currentDirectory)
+      : normalizeComparablePath(destinationPath) === normalizeComparablePath(state.currentDirectory);
+    if (destinationVisible) await loadMedia({ quiet: true });
+
+    if (result.imported.length) {
+      showToast(result.imported.length === 1
+        ? `«${result.imported[0].name}» перемещён в «${destinationPath.split(/[\\/]/).pop()}»`
+        : `${result.imported.length} файлов перемещено в «${destinationPath.split(/[\\/]/).pop()}»`);
+    }
+    if (result.errors.length) {
+      const firstError = result.errors[0];
+      const suffix = result.errors.length > 1 ? ` Ещё ошибок: ${result.errors.length - 1}.` : '';
+      showToast(`Не удалось переместить «${firstError.name}»: ${firstError.message}.${suffix}`, 'error');
+    }
+  } catch (error) {
+    showToast(`Не удалось переместить файл из Проводника: ${formatError(error)}`, 'error');
+  } finally {
+    state.moveInProgress = false;
+    clearExternalDropTargets();
+  }
 }
 
 async function refreshTreeAfterMove(sourcePath, destinationPath) {
@@ -1670,4 +1719,66 @@ window.addEventListener('dragover', (event) => {
 window.addEventListener('dragleave', (event) => {
   if (!state.draggedItem || state.externalDragStarted || event.relatedTarget) return;
   beginExternalDragAtWindowEdge();
+}, true);
+
+dom.galleryScroll.addEventListener('dragenter', (event) => {
+  if (!isExternalFileDrag(event) || state.moveInProgress || !state.currentDirectory) return;
+  event.preventDefault();
+  dom.galleryScroll.classList.add('external-drop-target');
+});
+
+dom.galleryScroll.addEventListener('dragover', (event) => {
+  if (!isExternalFileDrag(event) || state.moveInProgress || !state.currentDirectory) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  dom.galleryScroll.classList.add('external-drop-target');
+});
+
+dom.galleryScroll.addEventListener('dragleave', (event) => {
+  if (!dom.galleryScroll.contains(event.relatedTarget)) dom.galleryScroll.classList.remove('external-drop-target');
+});
+
+dom.galleryScroll.addEventListener('drop', (event) => {
+  if (!isExternalFileDrag(event) || state.moveInProgress || !state.currentDirectory) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const sourcePaths = droppedFilePaths(event.dataTransfer.files);
+  clearExternalDropTargets();
+  void importExternalFilesToDirectory(sourcePaths, state.currentDirectory);
+});
+
+dom.tree.addEventListener('dragover', (event) => {
+  if (!isExternalFileDrag(event) || state.moveInProgress || !state.root) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  dom.tree.classList.add('external-drop-target');
+});
+
+dom.tree.addEventListener('dragleave', (event) => {
+  if (!dom.tree.contains(event.relatedTarget)) dom.tree.classList.remove('external-drop-target');
+});
+
+dom.tree.addEventListener('drop', (event) => {
+  if (!isExternalFileDrag(event) || state.moveInProgress || !state.root) return;
+  event.preventDefault();
+  const sourcePaths = droppedFilePaths(event.dataTransfer.files);
+  clearExternalDropTargets();
+  void importExternalFilesToDirectory(sourcePaths, state.root.path);
+});
+
+window.addEventListener('dragover', (event) => {
+  if (!isExternalFileDrag(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = state.currentDirectory ? 'move' : 'none';
+}, true);
+
+window.addEventListener('drop', (event) => {
+  if (!isExternalFileDrag(event)) return;
+  event.preventDefault();
+  clearExternalDropTargets();
+  if (!state.currentDirectory) showToast('Сначала откройте папку в Lumina', 'error');
+}, true);
+
+window.addEventListener('dragleave', (event) => {
+  if (isExternalFileDrag(event) && !event.relatedTarget) clearExternalDropTargets();
 }, true);

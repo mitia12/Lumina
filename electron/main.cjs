@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, shell, nativeImage } = require('electron');
-const { promises: fs, watch, createReadStream } = require('node:fs');
+const { promises: fs, watch, createReadStream, constants: fsConstants } = require('node:fs');
 const { Readable } = require('node:stream');
 const { spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
@@ -635,6 +635,67 @@ app.whenReady().then(async () => {
 
     await fs.rename(safeItemPath, targetPath);
     return { moved: true, item: serializeMovedItem() };
+  });
+  ipcMain.handle('item:import-external', async (_event, sourcePaths, destinationPath) => {
+    if (!Array.isArray(sourcePaths) || sourcePaths.length === 0 || sourcePaths.length > 256) {
+      throw new Error('Выберите от 1 до 256 файлов для переноса.');
+    }
+    const safeDestinationPath = requireSafePath(destinationPath);
+    const destinationStat = await fs.stat(safeDestinationPath);
+    if (!destinationStat.isDirectory()) throw new Error('Цель переноса не является папкой.');
+
+    const imported = [];
+    const errors = [];
+    for (const sourceValue of sourcePaths) {
+      let sourcePath = '';
+      let targetPath = '';
+      let createdTarget = false;
+      try {
+        if (typeof sourceValue !== 'string' || !sourceValue || !path.isAbsolute(sourceValue)) {
+          throw new Error('Windows не передала корректный путь к файлу.');
+        }
+        sourcePath = path.resolve(sourceValue);
+        const sourceStat = await fs.stat(sourcePath);
+        if (!sourceStat.isFile()) throw new Error('Перенос папок пока не поддерживается.');
+
+        const fileName = path.basename(sourcePath);
+        targetPath = requireSafePath(path.join(safeDestinationPath, fileName));
+        if (pathsEqual(sourcePath, targetPath)) {
+          throw new Error('Файл уже находится в выбранной папке.');
+        }
+
+        await fs.copyFile(sourcePath, targetPath, fsConstants.COPYFILE_EXCL);
+        createdTarget = true;
+        const [copiedStat, currentSourceStat] = await Promise.all([fs.stat(targetPath), fs.stat(sourcePath)]);
+        if (copiedStat.size !== sourceStat.size
+          || currentSourceStat.size !== sourceStat.size
+          || currentSourceStat.mtimeMs !== sourceStat.mtimeMs) {
+          await fs.rm(targetPath, { force: true });
+          throw new Error('Файл изменился во время копирования. Повторите перенос.');
+        }
+        await fs.utimes(targetPath, sourceStat.atime, sourceStat.mtime).catch(() => {});
+        try {
+          await shell.trashItem(sourcePath);
+        } catch (error) {
+          await fs.rm(targetPath, { force: true }).catch(() => {});
+          throw new Error(`Не удалось удалить исходник: ${error.message || String(error)}`);
+        }
+        imported.push({ name: fileName, sourcePath, targetPath, destinationPath: safeDestinationPath });
+      } catch (error) {
+        if (createdTarget && targetPath) {
+          const sourceStillExists = await fs.access(sourcePath).then(() => true, () => false);
+          if (sourceStillExists) await fs.rm(targetPath, { force: true }).catch(() => {});
+        }
+        errors.push({
+          path: sourcePath || String(sourceValue || ''),
+          name: path.basename(sourcePath || String(sourceValue || 'Файл')),
+          message: error.code === 'EEXIST'
+            ? `В папке уже есть файл «${path.basename(targetPath)}».`
+            : (error.message || String(error))
+        });
+      }
+    }
+    return { imported, errors };
   });
   ipcMain.handle('item:rename', async (_event, itemPath, newNameValue) => {
     const safeItemPath = requireSafePath(itemPath);

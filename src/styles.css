@@ -394,6 +394,22 @@ body.resizing {
   color: var(--accent);
 }
 
+.tree-row.external-drop-target {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 19%, var(--surface-hover));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 66%, transparent);
+}
+
+.tree-row.external-drop-target .tree-icon {
+  color: var(--accent);
+}
+
+.tree-scroll.external-drop-target,
+.gallery-scroll.external-drop-target {
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 52%, transparent);
+}
+
 .tree-chevron {
   display: grid;
   width: 22px;

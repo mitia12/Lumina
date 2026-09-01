@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('lumina', {
   chooseFolder: () => ipcRenderer.invoke('folder:choose'),
@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('lumina', {
   revealItem: (itemPath) => ipcRenderer.invoke('item:reveal', itemPath),
   openItem: (itemPath) => ipcRenderer.invoke('item:open-default', itemPath),
   moveItem: (itemPath, destinationPath, viewDirectoryPath) => ipcRenderer.invoke('item:move', itemPath, destinationPath, viewDirectoryPath),
+  getDroppedFilePath: (file) => webUtils.getPathForFile(file),
+  importExternalFiles: (sourcePaths, destinationPath) => ipcRenderer.invoke('item:import-external', sourcePaths, destinationPath),
   renameItem: (itemPath, newName) => ipcRenderer.invoke('item:rename', itemPath, newName),
   createFolder: (directoryPath, folderName) => ipcRenderer.invoke('folder:create', directoryPath, folderName),
   readTextFile: (itemPath) => ipcRenderer.invoke('text:read', itemPath),
