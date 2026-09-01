@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('lumina', {
   chooseFolder: () => ipcRenderer.invoke('folder:choose'),
+  getRoots: () => ipcRenderer.invoke('root:list'),
+  detachRoot: (rootPath) => ipcRenderer.invoke('root:detach', rootPath),
+  trashRoot: (rootPath) => ipcRenderer.invoke('root:trash', rootPath),
   getChildren: (directoryPath) => ipcRenderer.invoke('folder:children', directoryPath),
   getMedia: (directoryPath, recursive) => ipcRenderer.invoke('folder:media', directoryPath, recursive),
   prepareMedia: (items, requestId) => ipcRenderer.invoke('folder:prepare', items, requestId),
@@ -16,7 +19,7 @@ contextBridge.exposeInMainWorld('lumina', {
   createFolder: (directoryPath, folderName) => ipcRenderer.invoke('folder:create', directoryPath, folderName),
   readTextFile: (itemPath) => ipcRenderer.invoke('text:read', itemPath),
   writeTextFile: (itemPath, content) => ipcRenderer.invoke('text:write', itemPath, content),
-  startExternalDrag: (itemPath) => ipcRenderer.send('item:start-external-drag', itemPath),
+  startExternalDrag: (itemPaths) => ipcRenderer.send('item:start-external-drag', itemPaths),
   onExternalDragEnded: (callback) => {
     const listener = (_event, result) => callback(result);
     ipcRenderer.on('item:external-drag-ended', listener);

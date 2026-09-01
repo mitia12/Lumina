@@ -178,6 +178,10 @@
           <svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/><path d="m10 15 4-4M11 11h3v3"/></svg>
           <span>Открыть папку</span>
         </button>
+        <button id="context-favorite" role="menuitem">
+          <svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"/></svg>
+          <span>Добавить в избранное</span>
+        </button>
         <div class="context-menu-separator"></div>
         <button id="context-rename" role="menuitem">
           <svg viewBox="0 0 24 24"><path d="m4 16-.8 4 4-.8L18 8.4 15.6 6 4 16Z"/><path d="m13.8 7.8 2.4 2.4M12 20h8"/></svg>
@@ -186,6 +190,10 @@
         <button id="context-create-folder" role="menuitem">
           <svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/><path d="M12 10v6M9 13h6"/></svg>
           <span>Создать новую папку</span>
+        </button>
+        <button class="hidden" id="context-detach-root" role="menuitem">
+          <svg viewBox="0 0 24 24"><path d="M8 12h8M12 8v8"/><path d="M4 7.5v9A2.5 2.5 0 0 0 6.5 19h11a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 17.5 7h-5l-2-2h-4A2.5 2.5 0 0 0 4 7.5Z"/><path d="m7 17 10-10"/></svg>
+          <span>Открепить папку</span>
         </button>
         <div class="context-menu-separator"></div>
         <button class="danger" id="context-delete" role="menuitem">

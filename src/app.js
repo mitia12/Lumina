@@ -8,7 +8,8 @@ const ICONS = {
   file: '<svg viewBox="0 0 24 24"><path d="M12 2.8 14 4l2.4-.3.9 2.2 2.1 1.2-.5 2.4 1.4 2-1.4 2 .5 2.4-2.1 1.2-.9 2.2-2.4-.3-2 1.2-2-1.2-2.4.3-.9-2.2-2.1-1.2.5-2.4-1.4-2 1.4-2-.5-2.4 2.1-1.2.9-2.2L10 4l2-1.2Z"/><circle cx="12" cy="12" r="3"/></svg>',
   open: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>',
-  reveal: '<svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/><path d="m10 15 4-4M11 11h3v3"/></svg>'
+  reveal: '<svg viewBox="0 0 24 24"><path d="M3.5 7.5v9A2.5 2.5 0 0 0 6 19h12a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 18 7h-6l-2-2H6a2.5 2.5 0 0 0-2.5 2.5Z"/><path d="m10 15 4-4M11 11h3v3"/></svg>',
+  star: '<svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"/></svg>'
 };
 
 const DEFAULT_THEME = { accent: '#b7f34a', background: '#080a0f', surface: '#0e1118' };
@@ -19,6 +20,7 @@ const CARD_CAPTION_HEIGHT = 54;
 const OVERSCAN_ROWS = 4;
 const MAX_PREVIEW_HISTORY = 100;
 const virtualCards = new Map();
+const customScrollbars = [];
 
 const dom = {
   workspace: document.querySelector('#workspace'),
@@ -67,8 +69,10 @@ const dom = {
   contextMenu: document.querySelector('#file-context-menu'),
   contextOpenDefault: document.querySelector('#context-open-default'),
   contextReveal: document.querySelector('#context-reveal'),
+  contextFavorite: document.querySelector('#context-favorite'),
   contextRename: document.querySelector('#context-rename'),
   contextCreateFolder: document.querySelector('#context-create-folder'),
+  contextDetachRoot: document.querySelector('#context-detach-root'),
   contextDelete: document.querySelector('#context-delete'),
   nameModal: document.querySelector('#name-modal'),
   nameForm: document.querySelector('#name-form'),
@@ -95,15 +99,19 @@ const state = {
   allMedia: [],
   mediaFilters: getStoredMediaFilters(),
   selected: null,
+  selectedPaths: new Set(),
+  selectionAnchorPath: null,
   previewHistory: [],
   previewHistoryEnabled: storedPreviewHistory === 'true',
+  favoriteItems: getStoredFavorites(),
   recursive: false,
   autoplay: false,
   requestId: 0,
   contextItem: null,
   nameAction: null,
   draggedItem: null,
-  externalDraggedItem: null,
+  draggedItems: [],
+  externalDraggedItems: [],
   externalDragStarted: false,
   moveInProgress: false,
   pendingDelete: null,
@@ -126,6 +134,44 @@ function getStoredMediaFilters() {
   } catch {
     return new Set(MEDIA_KINDS);
   }
+}
+
+function getStoredFavorites() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('lumina:favorites') || '[]');
+    if (!Array.isArray(stored)) return [];
+    return stored.filter((item) => item && typeof item.path === 'string'
+      && typeof item.name === 'string' && typeof item.kind === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function favoriteKey(itemPath) {
+  return normalizeComparablePath(itemPath);
+}
+
+function isFavorite(itemPath) {
+  const key = favoriteKey(itemPath);
+  return state.favoriteItems.some((item) => favoriteKey(item.path) === key);
+}
+
+function persistFavorites() {
+  localStorage.setItem('lumina:favorites', JSON.stringify(state.favoriteItems));
+}
+
+function toggleFavorite(item) {
+  if (!item) return;
+  const key = favoriteKey(item.path);
+  if (isFavorite(item.path)) {
+    state.favoriteItems = state.favoriteItems.filter((entry) => favoriteKey(entry.path) !== key);
+    showToast(`«${item.name}» удалён из избранного`);
+  } else {
+    state.favoriteItems = [{ ...item }, ...state.favoriteItems];
+    showToast(`«${item.name}» добавлен в избранное`);
+  }
+  persistFavorites();
+  renderFavoritesSection();
 }
 
 function normalizeHex(value, fallback) {
@@ -244,6 +290,87 @@ function formatDate(timestamp) {
   }).format(new Date(timestamp));
 }
 
+function updateCustomScrollbars() {
+  for (const scrollbar of customScrollbars) scrollbar.update();
+}
+
+function initCustomScrollbar(scroller) {
+  const track = document.createElement('div');
+  track.className = 'custom-scrollbar';
+  const thumb = document.createElement('div');
+  thumb.className = 'custom-scrollbar-thumb';
+  track.append(thumb);
+  document.body.append(track);
+
+  let frame = 0;
+  const update = () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const rect = scroller.getBoundingClientRect();
+      const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+      const visible = maxScroll > 1 && rect.width > 20 && rect.height > 20
+        && getComputedStyle(scroller).visibility !== 'hidden';
+      track.classList.toggle('visible', visible);
+      if (!visible) return;
+      const trackHeight = Math.max(0, rect.height - 8);
+      const thumbHeight = Math.max(32, trackHeight * (scroller.clientHeight / scroller.scrollHeight));
+      const travel = Math.max(0, trackHeight - thumbHeight);
+      const thumbTop = maxScroll > 0 ? (scroller.scrollTop / maxScroll) * travel : 0;
+      track.style.left = `${Math.round(rect.right - 11)}px`;
+      track.style.top = `${Math.round(rect.top + 4)}px`;
+      track.style.height = `${Math.round(trackHeight)}px`;
+      thumb.style.height = `${Math.round(thumbHeight)}px`;
+      thumb.style.transform = `translateY(${Math.round(thumbTop)}px)`;
+    });
+  };
+
+  thumb.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    thumb.setPointerCapture(event.pointerId);
+    thumb.classList.add('dragging');
+    document.body.classList.add('scrollbar-dragging');
+    const startY = event.clientY;
+    const startScroll = scroller.scrollTop;
+    const trackHeight = track.clientHeight;
+    const travel = Math.max(1, trackHeight - thumb.offsetHeight);
+    const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const onMove = (moveEvent) => {
+      scroller.scrollTop = startScroll + (moveEvent.clientY - startY) * (maxScroll / travel);
+    };
+    const onEnd = () => {
+      thumb.classList.remove('dragging');
+      document.body.classList.remove('scrollbar-dragging');
+      thumb.removeEventListener('pointermove', onMove);
+      thumb.removeEventListener('pointerup', onEnd);
+      thumb.removeEventListener('pointercancel', onEnd);
+    };
+    thumb.addEventListener('pointermove', onMove);
+    thumb.addEventListener('pointerup', onEnd);
+    thumb.addEventListener('pointercancel', onEnd);
+  });
+
+  track.addEventListener('pointerdown', (event) => {
+    if (event.target !== track || event.button !== 0) return;
+    event.preventDefault();
+    const ratio = Math.min(1, Math.max(0, event.offsetY / track.clientHeight));
+    scroller.scrollTop = ratio * (scroller.scrollHeight - scroller.clientHeight) - scroller.clientHeight / 2;
+  });
+  scroller.addEventListener('scroll', update, { passive: true });
+  new ResizeObserver(update).observe(scroller);
+  new MutationObserver(update).observe(scroller, { childList: true, subtree: true });
+  window.addEventListener('resize', update, { passive: true });
+  const api = { update };
+  customScrollbars.push(api);
+  update();
+  return api;
+}
+
+function initCustomScrollbars() {
+  [dom.tree, dom.galleryScroll, dom.preview].forEach(initCustomScrollbar);
+}
+
 function pluralFiles(count) {
   const lastTwo = count % 100;
   const last = count % 10;
@@ -329,6 +456,8 @@ async function openFolder() {
       state.root = addedRoots[0] || roots[0];
       state.currentDirectory = state.root.path;
       state.selected = null;
+      state.selectedPaths = new Set();
+      state.selectionAnchorPath = null;
       state.media = [];
       state.allMedia = [];
       state.preparedPaths = new Set();
@@ -354,6 +483,8 @@ async function renderTree() {
   if (!state.roots.length) return;
   dom.tree.replaceChildren();
   const fragment = document.createDocumentFragment();
+  const favorites = createFavoritesSection();
+  if (favorites) fragment.append(favorites);
   const rootNodes = state.roots.map((root) => {
     const rootNode = createTreeNode(root, 0, true);
     rootNode.classList.add('library-root-node');
@@ -370,6 +501,52 @@ async function renderTree() {
   updateSelectionClasses();
 }
 
+function createFavoritesSection() {
+  const favorites = state.favoriteItems.filter((item) => rootForPath(item.path));
+  if (!favorites.length) return null;
+  const section = document.createElement('section');
+  section.className = 'tree-favorites';
+  const heading = document.createElement('div');
+  heading.className = 'tree-favorites-heading';
+  heading.innerHTML = `${ICONS.star}<span>Избранное</span>`;
+  const list = document.createElement('div');
+  list.className = 'tree-favorites-list';
+  list.append(...favorites.map(createFavoriteRow));
+  section.append(heading, list);
+  return section;
+}
+
+function createFavoriteRow(entry) {
+  const row = document.createElement('div');
+  row.className = 'tree-row favorite-row';
+  row.dataset.rowPath = entry.path;
+  row.dataset.kind = entry.kind;
+  row.title = entry.path;
+  const marker = document.createElement('span');
+  marker.className = 'favorite-marker';
+  marker.innerHTML = ICONS.star;
+  const icon = document.createElement('span');
+  icon.className = 'tree-icon';
+  icon.innerHTML = isTextFile(entry) ? ICONS.text : (ICONS[entry.kind] || ICONS.file);
+  const name = document.createElement('span');
+  name.className = 'tree-name';
+  name.textContent = entry.name;
+  row.append(marker, icon, name);
+  bindEntryDrag(row, entry);
+  if (entry.kind === 'directory') bindSimpleDirectoryDrop(row, entry.path);
+  row.addEventListener('click', () => entry.kind === 'directory' ? selectDirectory(entry.path) : selectMedia(entry));
+  row.addEventListener('contextmenu', (event) => showFileContextMenu(event, entry));
+  return row;
+}
+
+function renderFavoritesSection() {
+  dom.tree.querySelector('.tree-favorites')?.remove();
+  const section = createFavoritesSection();
+  if (section) dom.tree.prepend(section);
+  updateSelectionClasses();
+  updateCustomScrollbars();
+}
+
 function createTreeNode(entry, depth, expanded = false) {
   const node = document.createElement('div');
   node.className = 'tree-node';
@@ -382,6 +559,7 @@ function createTreeNode(entry, depth, expanded = false) {
   row.dataset.kind = entry.kind;
   row.classList.toggle('text-file-row', isTextFile(entry));
   row.title = entry.path;
+  bindEntryDrag(row, entry);
 
   const chevron = document.createElement('button');
   chevron.className = `tree-chevron ${entry.kind === 'directory' ? '' : 'spacer'}`;
@@ -454,9 +632,9 @@ function createTreeNode(entry, depth, expanded = false) {
       event.stopPropagation();
       clearDragExpand();
       if (state.draggedItem) {
-        const item = state.draggedItem;
+        const items = state.draggedItems.length ? [...state.draggedItems] : [state.draggedItem];
         resetFileDragState();
-        void moveItemToDirectory(item, entry.path);
+        void moveItemsToDirectory(items, entry.path);
       } else {
         clearExternalDropTargets();
         void importExternalFilesToDirectory(externalPaths, entry.path);
@@ -467,6 +645,62 @@ function createTreeNode(entry, depth, expanded = false) {
   }
   row.addEventListener('contextmenu', (event) => showFileContextMenu(event, entry));
   return node;
+}
+
+function selectedMediaItems() {
+  return state.media.filter((item) => state.selectedPaths.has(item.path));
+}
+
+function bindEntryDrag(element, entry) {
+  const isRoot = isLibraryRootPath(entry.path);
+  element.draggable = !isRoot;
+  if (isRoot) return;
+  element.addEventListener('dragstart', (event) => {
+    if (event.target.closest('button') || state.moveInProgress) {
+      event.preventDefault();
+      return;
+    }
+    const selected = state.selectedPaths.has(entry.path) ? selectedMediaItems() : [];
+    const items = selected.length ? selected : [entry];
+    state.draggedItems = items;
+    state.draggedItem = items[0];
+    element.classList.add('dragging');
+    document.body.classList.add('file-dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/x-lumina-paths', JSON.stringify(items.map((item) => item.path)));
+    event.dataTransfer.setData('text/plain', items.map((item) => item.path).join('\n'));
+  });
+  element.addEventListener('dragend', resetFileDragState);
+}
+
+function bindSimpleDirectoryDrop(row, destinationPath) {
+  row.addEventListener('dragenter', (event) => {
+    if ((!state.draggedItem && !isExternalFileDrag(event)) || state.moveInProgress) return;
+    event.preventDefault();
+    row.classList.add(state.draggedItem ? 'drop-target' : 'external-drop-target');
+  });
+  row.addEventListener('dragover', (event) => {
+    if ((!state.draggedItem && !isExternalFileDrag(event)) || state.moveInProgress) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  });
+  row.addEventListener('dragleave', (event) => {
+    if (!row.contains(event.relatedTarget)) row.classList.remove('drop-target', 'external-drop-target');
+  });
+  row.addEventListener('drop', (event) => {
+    const externalPaths = isExternalFileDrag(event) ? droppedFilePaths(event.dataTransfer.files) : [];
+    if ((!state.draggedItem && !externalPaths.length) || state.moveInProgress) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.draggedItem) {
+      const items = state.draggedItems.length ? [...state.draggedItems] : [state.draggedItem];
+      resetFileDragState();
+      void moveItemsToDirectory(items, destinationPath);
+    } else {
+      clearExternalDropTargets();
+      void importExternalFilesToDirectory(externalPaths, destinationPath);
+    }
+  });
 }
 
 async function expandTreeNode(entry, chevron, container, childDepth) {
@@ -491,6 +725,7 @@ async function expandTreeNode(entry, chevron, container, childDepth) {
 
 function resetFileDragState() {
   state.draggedItem = null;
+  state.draggedItems = [];
   document.body.classList.remove('file-dragging');
   document.querySelectorAll('.tree-row.drop-target').forEach((row) => {
     clearTimeout(row.dragExpandTimer);
@@ -498,6 +733,7 @@ function resetFileDragState() {
     row.classList.remove('drop-target');
   });
   document.querySelectorAll('.media-card.dragging').forEach((card) => card.classList.remove('dragging'));
+  document.querySelectorAll('.tree-row.dragging').forEach((row) => row.classList.remove('dragging'));
 }
 
 async function importExternalFilesToDirectory(sourcePaths, destinationPath) {
@@ -563,46 +799,93 @@ async function refreshTreeDirectory(directoryPath) {
   updateSelectionClasses();
 }
 
-async function moveItemToDirectory(item, destinationPath) {
-  if (!item || state.moveInProgress || !state.currentDirectory) return;
+function itemWithPath(item, nextPath) {
+  const kind = item.kind;
+  return {
+    ...item,
+    name: nextPath.split(/[\\/]/).pop(),
+    path: nextPath,
+    directory: parentPath(nextPath),
+    url: kind === 'directory' ? null : `lumina-media://asset/?path=${encodeURIComponent(nextPath)}`,
+    thumbnailUrl: kind === 'image' || kind === 'video' || kind === 'audio'
+      ? `lumina-media://thumb/?path=${encodeURIComponent(nextPath)}`
+      : null,
+    previewUrl: kind === 'video' ? `lumina-media://preview/?path=${encodeURIComponent(nextPath)}` : null
+  };
+}
+
+function remapTrackedItems(oldPath, newPath, exactItem) {
+  const remap = (entry) => {
+    if (!isPathWithinDirectory(entry.path, oldPath)) return entry;
+    const nextEntryPath = replacePathPrefix(entry.path, oldPath, newPath);
+    return entry.path === oldPath && exactItem ? exactItem : itemWithPath(entry, nextEntryPath);
+  };
+  state.previewHistory = state.previewHistory.map(remap);
+  state.favoriteItems = state.favoriteItems.map(remap);
+  persistFavorites();
+}
+
+async function moveItemsToDirectory(items, destinationPath) {
+  const uniqueItems = [...new Map((items || []).filter(Boolean).map((item) => [item.path, item])).values()];
+  if (!uniqueItems.length || state.moveInProgress || !state.currentDirectory) return;
   state.moveInProgress = true;
+  const moved = [];
+  const errors = [];
   try {
-    const result = await window.lumina.moveItem(item.path, destinationPath, state.currentDirectory);
-    if (!result.moved) {
-      showToast('Файл уже находится в этой папке');
+    for (const item of uniqueItems) {
+      try {
+        const result = await window.lumina.moveItem(item.path, destinationPath, state.currentDirectory);
+        if (result.moved) moved.push({ item, next: result.item });
+      } catch (error) {
+        errors.push({ item, error });
+      }
+    }
+    if (!moved.length && !errors.length) {
+      showToast('Все выбранные элементы уже находятся в этой папке');
       return;
     }
 
-    const movedItem = result.item;
-    const oldPath = item.path;
-    state.preparedPaths.delete(oldPath);
-    state.warmedPaths.delete(oldPath);
-    const remainsVisible = state.recursive
-      ? isPathWithinDirectory(destinationPath, state.currentDirectory)
-      : normalizeComparablePath(destinationPath) === normalizeComparablePath(state.currentDirectory);
-    state.allMedia = remainsVisible
-      ? state.allMedia.map((entry) => entry.path === oldPath ? movedItem : entry)
-      : state.allMedia.filter((entry) => entry.path !== oldPath);
-    replacePreviewHistoryItem(oldPath, movedItem);
-
-    if (state.selected?.path === oldPath) {
-      if (remainsVisible) {
-        state.selected = movedItem;
-        if (state.previewHistoryEnabled) renderPreviewHistory();
-        else renderPreview(movedItem);
-      } else {
-        state.selected = null;
-        renderEmptyPreview();
+    const movedByOldPath = new Map();
+    for (const { item, next } of moved) {
+      movedByOldPath.set(item.path, next);
+      state.preparedPaths.delete(item.path);
+      state.warmedPaths.delete(item.path);
+      remapTrackedItems(item.path, next.path, next);
+      if (item.kind === 'directory' && isPathWithinDirectory(state.currentDirectory, item.path)) {
+        state.currentDirectory = replacePathPrefix(state.currentDirectory, item.path, next.path);
+        state.root = rootForPath(state.currentDirectory) || state.root;
       }
     }
-    applyMediaFilters({ resetScroll: false });
-    await refreshTreeAfterMove(oldPath, destinationPath);
-    showToast(`«${item.name}» перемещён в «${destinationPath.split(/[\\/]/).pop()}»`);
-  } catch (error) {
-    showToast(`Не удалось переместить файл: ${formatError(error)}`, 'error');
+
+    state.selectedPaths = new Set([...state.selectedPaths].map((itemPath) => movedByOldPath.get(itemPath)?.path || itemPath));
+    const activeNext = state.selected ? movedByOldPath.get(state.selected.path) : null;
+    if (activeNext) {
+      const remainsVisible = state.recursive
+        ? isPathWithinDirectory(activeNext.path, state.currentDirectory)
+        : normalizeComparablePath(parentPath(activeNext.path)) === normalizeComparablePath(state.currentDirectory);
+      state.selected = remainsVisible ? activeNext : null;
+    }
+
+    await renderTree();
+    await loadMedia({ quiet: true });
+    if (!state.selected) renderEmptyPreview();
+    else if (state.previewHistoryEnabled) renderPreviewHistory();
+    else renderPreview(state.selected);
+    updateSelectionClasses();
+
+    if (moved.length) {
+      showToast(moved.length === 1
+        ? `«${moved[0].item.name}» перемещён в «${destinationPath.split(/[\\/]/).pop()}»`
+        : `${moved.length} элементов перемещено в «${destinationPath.split(/[\\/]/).pop()}»`);
+    }
+    if (errors.length) showToast(`Не удалось переместить ${errors.length} элементов: ${formatError(errors[0].error)}`, 'error');
   } finally {
     state.moveInProgress = false;
   }
+}
+
+async function moveItemToDirectory(item, destinationPath) {
+  return moveItemsToDirectory([item], destinationPath);
 }
 
 async function selectDirectory(directoryPath) {
@@ -615,6 +898,8 @@ async function selectDirectory(directoryPath) {
   state.currentDirectory = directoryPath;
   dom.galleryScroll.scrollTop = 0;
   state.selected = null;
+  state.selectedPaths = new Set();
+  state.selectionAnchorPath = null;
   renderEmptyPreview();
   updateSelectionClasses();
   await loadMedia();
@@ -669,6 +954,8 @@ async function loadMedia(options = {}) {
     }
 
     state.allMedia = media;
+    const availablePaths = new Set(media.map((item) => item.path));
+    state.selectedPaths = new Set([...state.selectedPaths].filter((itemPath) => availablePaths.has(itemPath)));
     if (state.selected && !media.some((item) => item.path === state.selected.path)) {
       removeFromPreviewHistory(state.selected.path);
       state.selected = null;
@@ -926,25 +1213,13 @@ function createMediaCard(item) {
   card.className = 'media-card loading-media';
   card.dataset.path = item.path;
   card.dataset.autoplayMode = String(state.autoplay);
-  if (item.path === state.selected?.path) card.classList.add('selected');
+  if (state.selectedPaths.has(item.path)) card.classList.add('selected');
   card.tabIndex = 0;
   card.draggable = true;
   card.title = item.path;
   const textFile = isTextFile(item);
   if (textFile) card.classList.add('text-file-card');
-  card.addEventListener('dragstart', (event) => {
-    if (event.target.closest('button') || state.moveInProgress) {
-      event.preventDefault();
-      return;
-    }
-    state.draggedItem = item;
-    card.classList.add('dragging');
-    document.body.classList.add('file-dragging');
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('application/x-lumina-path', item.path);
-    event.dataTransfer.setData('text/plain', item.path);
-  });
-  card.addEventListener('dragend', resetFileDragState);
+  bindEntryDrag(card, item);
 
   const frame = document.createElement('div');
   frame.className = 'media-frame';
@@ -1056,7 +1331,7 @@ function createMediaCard(item) {
   caption.append(name, location);
   card.append(frame, caption);
 
-  card.addEventListener('click', () => selectMedia(item));
+  card.addEventListener('click', (event) => selectMediaWithModifiers(item, event));
   card.addEventListener('contextmenu', (event) => showFileContextMenu(event, item));
   card.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -1072,24 +1347,70 @@ function createMediaCard(item) {
 }
 
 function selectMedia(item, options = {}) {
+  state.selectedPaths = new Set([item.path]);
+  state.selectionAnchorPath = item.path;
+  setActiveMedia(item, options);
+}
+
+function setActiveMedia(item, options = {}, recordHistory = true) {
   state.selected = item;
   updateSelectionClasses();
   if (state.previewHistoryEnabled) {
-    state.previewHistory = [item, ...state.previewHistory.filter((entry) => entry.path !== item.path)]
-      .slice(0, MAX_PREVIEW_HISTORY);
+    if (recordHistory) {
+      state.previewHistory = [item, ...state.previewHistory.filter((entry) => entry.path !== item.path)]
+        .slice(0, MAX_PREVIEW_HISTORY);
+    }
     renderPreviewHistory(options);
   } else {
     renderPreview(item, options);
   }
 }
 
+function selectMediaWithModifiers(item, event) {
+  if (!event.shiftKey && !event.ctrlKey) {
+    selectMedia(item);
+    return;
+  }
+
+  if (event.shiftKey) {
+    const anchorIndex = state.media.findIndex((entry) => entry.path === state.selectionAnchorPath);
+    const itemIndex = state.media.findIndex((entry) => entry.path === item.path);
+    if (anchorIndex < 0 || itemIndex < 0) {
+      selectMedia(item);
+      return;
+    }
+    const start = Math.min(anchorIndex, itemIndex);
+    const end = Math.max(anchorIndex, itemIndex);
+    const rangePaths = state.media.slice(start, end + 1).map((entry) => entry.path);
+    state.selectedPaths = event.ctrlKey
+      ? new Set([...state.selectedPaths, ...rangePaths])
+      : new Set(rangePaths);
+    setActiveMedia(item);
+    return;
+  }
+
+  state.selectionAnchorPath = item.path;
+  if (state.selectedPaths.has(item.path)) {
+    state.selectedPaths.delete(item.path);
+    const nextItem = [...state.media].reverse().find((entry) => state.selectedPaths.has(entry.path)) || null;
+    state.selected = nextItem;
+    updateSelectionClasses();
+    if (nextItem) setActiveMedia(nextItem, {}, false);
+    else renderEmptyPreview();
+  } else {
+    state.selectedPaths.add(item.path);
+    setActiveMedia(item);
+  }
+}
+
 function updateSelectionClasses() {
   document.querySelectorAll('.media-card').forEach((card) => {
-    card.classList.toggle('selected', card.dataset.path === state.selected?.path);
+    card.classList.toggle('selected', state.selectedPaths.has(card.dataset.path));
   });
   document.querySelectorAll('.tree-row').forEach((row) => {
-    const selectedPath = state.selected?.path || state.currentDirectory;
-    row.classList.toggle('selected', row.dataset.rowPath === selectedPath);
+    const rowPath = row.dataset.rowPath;
+    row.classList.toggle('selected', state.selectedPaths.has(rowPath)
+      || (!state.selectedPaths.size && rowPath === state.currentDirectory));
   });
 }
 
@@ -1433,7 +1754,11 @@ function showFileContextMenu(event, item) {
   state.contextItem = item;
   const isRoot = isLibraryRootPath(item.path);
   dom.contextRename.disabled = isRoot;
-  dom.contextDelete.disabled = isRoot;
+  dom.contextDelete.disabled = false;
+  dom.contextDetachRoot.classList.toggle('hidden', !isRoot);
+  dom.contextFavorite.querySelector('span').textContent = isFavorite(item.path)
+    ? 'Убрать из избранного'
+    : 'Добавить в избранное';
   dom.contextCreateFolder.querySelector('span').textContent = item.kind === 'directory'
     ? 'Создать папку внутри'
     : 'Создать новую папку';
@@ -1490,6 +1815,7 @@ async function submitNameAction(event) {
 
     const oldPath = action.item.path;
     const selectedPath = state.selected?.path;
+    const selectedPaths = [...state.selectedPaths];
     const result = await window.lumina.renameItem(oldPath, dom.nameInput.value);
     closeNameModal();
     if (!result.renamed) return;
@@ -1500,17 +1826,20 @@ async function submitNameAction(event) {
       ? replacePathPrefix(selectedPath, oldPath, result.path)
       : selectedPath;
     state.selected = null;
+    state.selectedPaths = new Set(selectedPaths.map((itemPath) => (
+      isPathWithinDirectory(itemPath, oldPath) ? replacePathPrefix(itemPath, oldPath, result.path) : itemPath
+    )));
+    state.selectionAnchorPath = state.selectionAnchorPath && isPathWithinDirectory(state.selectionAnchorPath, oldPath)
+      ? replacePathPrefix(state.selectionAnchorPath, oldPath, result.path)
+      : state.selectionAnchorPath;
+    remapTrackedItems(oldPath, result.path, {
+      ...itemWithPath(action.item, result.path),
+      name: result.name,
+    });
     state.preparedPaths = new Set();
     state.warmedPaths = new Set();
     await refreshTreeDirectory(parentPath(oldPath));
     await loadMedia();
-    if (action.item.kind === 'directory') {
-      removeFromPreviewHistory(oldPath);
-    } else {
-      const renamedHistoryItem = state.allMedia.find((entry) => entry.path === result.path);
-      if (renamedHistoryItem) replacePreviewHistoryItem(oldPath, renamedHistoryItem);
-      else removeFromPreviewHistory(oldPath);
-    }
     const nextSelected = state.allMedia.find((entry) => entry.path === nextSelectedPath);
     if (nextSelected) selectMedia(nextSelected);
     showToast(`Переименовано в «${result.name}»`);
@@ -1539,15 +1868,39 @@ function setAutoplay(enabled) {
   if (state.media.length) renderVirtualWindow(true);
 }
 
+function actionItemsFor(item) {
+  if (!item) return [];
+  if (state.selectedPaths.has(item.path)) {
+    const selected = selectedMediaItems();
+    if (selected.length) return selected;
+  }
+  return [item];
+}
+
+function removeFavoritesWithin(itemPath) {
+  const previousLength = state.favoriteItems.length;
+  state.favoriteItems = state.favoriteItems.filter((entry) => !isPathWithinDirectory(entry.path, itemPath));
+  if (state.favoriteItems.length !== previousLength) persistFavorites();
+}
+
 function requestDelete(item) {
-  if (!state.confirmBeforeDelete) {
-    void deleteItem(item);
+  const items = actionItemsFor(item);
+  if (!items.length) return;
+  const hasRoot = items.some((entry) => isLibraryRootPath(entry.path));
+  if (!state.confirmBeforeDelete && !hasRoot) {
+    void deleteItems(items);
     return;
   }
-  state.pendingDelete = item;
-  dom.deleteDescription.textContent = item.kind === 'directory'
-    ? `Папка «${item.name}» и всё её содержимое будут перемещены в Корзину Windows.`
-    : `«${item.name}» исчезнет из исходной папки, но его можно будет восстановить из Корзины Windows.`;
+  state.pendingDelete = items;
+  if (hasRoot) {
+    dom.deleteDescription.textContent = `ВНИМАНИЕ: корневая папка «${items[0].name}» и всё её содержимое будут перемещены в Корзину Windows. Это действие требует отдельного подтверждения.`;
+  } else if (items.length > 1) {
+    dom.deleteDescription.textContent = `${items.length} выбранных файлов будут перемещены в Корзину Windows.`;
+  } else {
+    dom.deleteDescription.textContent = items[0].kind === 'directory'
+      ? `Папка «${items[0].name}» и всё её содержимое будут перемещены в Корзину Windows.`
+      : `«${items[0].name}» исчезнет из исходной папки, но его можно будет восстановить из Корзины Windows.`;
+  }
   dom.deleteModal.classList.remove('hidden');
   dom.deleteConfirm.focus();
 }
@@ -1557,34 +1910,109 @@ function closeDeleteModal() {
   dom.deleteModal.classList.add('hidden');
 }
 
-async function deleteItem(item, fromModal = false) {
-  if (!item || state.deletingPaths.has(item.path)) return;
-  state.deletingPaths.add(item.path);
+async function applyRootsAfterRemoval(nextRoots, removedPath, removeFavorites) {
+  state.roots = nextRoots;
+  state.previewHistory = state.previewHistory.filter((entry) => !isPathWithinDirectory(entry.path, removedPath));
+  if (removeFavorites) removeFavoritesWithin(removedPath);
+  state.preparedPaths = new Set([...state.preparedPaths].filter((itemPath) => !isPathWithinDirectory(itemPath, removedPath)));
+  state.warmedPaths = new Set([...state.warmedPaths].filter((itemPath) => !isPathWithinDirectory(itemPath, removedPath)));
+  const currentRemoved = state.currentDirectory && isPathWithinDirectory(state.currentDirectory, removedPath);
+  if (currentRemoved || !state.roots.length) {
+    state.selected = null;
+    state.selectedPaths = new Set();
+    state.selectionAnchorPath = null;
+    state.allMedia = [];
+    state.media = [];
+    if (state.roots.length) {
+      state.root = state.roots[0];
+      state.currentDirectory = state.root.path;
+    } else {
+      state.root = null;
+      state.currentDirectory = null;
+    }
+  } else {
+    state.root = rootForPath(state.currentDirectory) || state.roots[0];
+  }
+  updateRootTitle();
+  if (!state.roots.length) {
+    dom.tree.innerHTML = `<div class="panel-placeholder compact"><div class="placeholder-icon">${ICONS.folder}</div><p>Добавьте одну или несколько папок, чтобы увидеть их структуру</p></div>`;
+    setGalleryView('welcome');
+    dom.mediaSummary.textContent = 'Выберите папку для начала';
+    renderBreadcrumbs();
+    renderEmptyPreview();
+    updateCustomScrollbars();
+    return;
+  }
+  await renderTree();
+  await loadMedia({ quiet: false });
+}
+
+async function detachRoot(item) {
+  if (!item || !isLibraryRootPath(item.path)) return;
+  try {
+    const roots = await window.lumina.detachRoot(item.path);
+    await applyRootsAfterRemoval(roots, item.path, false);
+    showToast(`Папка «${item.name}» откреплена. Файлы не удалены.`);
+  } catch (error) {
+    showToast(`Не удалось открепить папку: ${formatError(error)}`, 'error');
+  }
+}
+
+async function deleteItems(items, fromModal = false) {
+  const uniqueItems = [...new Map((items || []).filter(Boolean).map((item) => [item.path, item])).values()];
+  if (!uniqueItems.length || uniqueItems.some((item) => state.deletingPaths.has(item.path))) return;
+  uniqueItems.forEach((item) => state.deletingPaths.add(item.path));
   if (fromModal) {
     dom.deleteConfirm.disabled = true;
     dom.deleteConfirm.textContent = 'Удаление…';
   }
+  const deleted = [];
+  const errors = [];
   try {
-    await window.lumina.moveToTrash(item.path);
-    if (fromModal) closeDeleteModal();
-    state.preparedPaths.delete(item.path);
-    state.warmedPaths.delete(item.path);
-    removeFromPreviewHistory(item.path);
-    if (state.selected && isPathWithinDirectory(state.selected.path, item.path)) {
-      state.selected = null;
-      renderEmptyPreview();
+    if (uniqueItems.length === 1 && isLibraryRootPath(uniqueItems[0].path)) {
+      const item = uniqueItems[0];
+      try {
+        const roots = await window.lumina.trashRoot(item.path);
+        deleted.push(item);
+        if (fromModal) closeDeleteModal();
+        await applyRootsAfterRemoval(roots, item.path, true);
+        showToast(`Корневая папка «${item.name}» перемещена в Корзину`);
+      } catch (error) {
+        errors.push({ item, error });
+      }
+    } else {
+      for (const item of uniqueItems) {
+        try {
+          await window.lumina.moveToTrash(item.path);
+          deleted.push(item);
+        } catch (error) {
+          errors.push({ item, error });
+        }
+      }
+      if (fromModal) closeDeleteModal();
+      for (const item of deleted) {
+        state.preparedPaths.delete(item.path);
+        state.warmedPaths.delete(item.path);
+        removeFromPreviewHistory(item.path);
+        removeFavoritesWithin(item.path);
+        state.selectedPaths = new Set([...state.selectedPaths].filter((itemPath) => !isPathWithinDirectory(itemPath, item.path)));
+        state.allMedia = state.allMedia.filter((media) => !isPathWithinDirectory(media.path, item.path));
+        if (state.selected && isPathWithinDirectory(state.selected.path, item.path)) state.selected = null;
+        if (item.kind === 'directory' && isPathWithinDirectory(state.currentDirectory, item.path)) {
+          state.currentDirectory = parentPath(item.path);
+          state.root = rootForPath(state.currentDirectory) || state.root;
+        }
+      }
+      await renderTree();
+      await loadMedia({ quiet: true });
+      if (!state.selected) renderEmptyPreview();
+      if (deleted.length) {
+        showToast(deleted.length === 1 ? 'Элемент перемещён в Корзину' : `${deleted.length} элементов перемещено в Корзину`);
+      }
     }
-    const removedCurrentDirectory = item.kind === 'directory' && isPathWithinDirectory(state.currentDirectory, item.path);
-    if (removedCurrentDirectory) state.currentDirectory = parentPath(item.path);
-    state.allMedia = state.allMedia.filter((media) => !isPathWithinDirectory(media.path, item.path));
-    applyMediaFilters({ resetScroll: false });
-    showToast(item.kind === 'directory' ? 'Папка перемещена в Корзину' : 'Файл перемещён в Корзину');
-    await refreshTreeDirectory(parentPath(item.path));
-    if (removedCurrentDirectory) await loadMedia();
-  } catch (error) {
-    showToast(`Не удалось удалить файл: ${formatError(error)}`, 'error');
+    if (errors.length) showToast(`Не удалось удалить ${errors.length} элементов: ${formatError(errors[0].error)}`, 'error');
   } finally {
-    state.deletingPaths.delete(item.path);
+    uniqueItems.forEach((item) => state.deletingPaths.delete(item.path));
     if (fromModal) {
       dom.deleteConfirm.disabled = false;
       dom.deleteConfirm.textContent = 'В корзину';
@@ -1592,8 +2020,12 @@ async function deleteItem(item, fromModal = false) {
   }
 }
 
+async function deleteItem(item, fromModal = false) {
+  return deleteItems([item], fromModal);
+}
+
 async function confirmDelete() {
-  await deleteItem(state.pendingDelete, true);
+  await deleteItems(state.pendingDelete, true);
 }
 
 function togglePanel(side, visible) {
@@ -1717,6 +2149,11 @@ dom.contextReveal.addEventListener('click', async () => {
     showToast(`Не удалось открыть папку: ${formatError(error)}`, 'error');
   }
 });
+dom.contextFavorite.addEventListener('click', () => {
+  const item = state.contextItem;
+  hideFileContextMenu();
+  toggleFavorite(item);
+});
 dom.contextRename.addEventListener('click', () => {
   const item = state.contextItem;
   hideFileContextMenu();
@@ -1726,6 +2163,11 @@ dom.contextCreateFolder.addEventListener('click', () => {
   const item = state.contextItem;
   hideFileContextMenu();
   if (item) openNameModal('create-folder', item);
+});
+dom.contextDetachRoot.addEventListener('click', () => {
+  const item = state.contextItem;
+  hideFileContextMenu();
+  void detachRoot(item);
 });
 dom.contextDelete.addEventListener('click', () => {
   const item = state.contextItem;
@@ -1774,6 +2216,24 @@ dom.confirmDeleteToggle.checked = state.confirmBeforeDelete;
 dom.queueAutoplayToggle.checked = state.queueAutoplay;
 dom.previewHistoryToggle.checked = state.previewHistoryEnabled;
 syncMediaFilters();
+initCustomScrollbars();
+
+async function loadInitialRoots() {
+  try {
+    const roots = await window.lumina.getRoots();
+    if (!roots?.length || state.roots.length) return;
+    state.roots = roots;
+    state.root = roots[0];
+    state.currentDirectory = roots[0].path;
+    updateRootTitle();
+    await renderTree();
+    await loadMedia({ prepareRoots: true });
+  } catch (error) {
+    showToast(`Не удалось открыть начальные папки: ${formatError(error)}`, 'error');
+  }
+}
+
+void loadInitialRoots();
 
 let galleryScrollFrame;
 dom.galleryScroll.addEventListener('scroll', () => {
@@ -1844,41 +2304,50 @@ window.lumina.onPrepareProgress((progress) => {
 });
 
 window.lumina.onExternalDragEnded(async (result) => {
-  const item = state.externalDraggedItem?.path === result.path
-    ? state.externalDraggedItem
-    : state.allMedia.find((entry) => entry.path === result.path);
-  state.externalDraggedItem = null;
+  const results = Array.isArray(result?.items) ? result.items : [];
+  const draggedItems = [...state.externalDraggedItems];
+  state.externalDraggedItems = [];
   state.externalDragStarted = false;
   resetFileDragState();
-  if (result.error) {
-    showToast(`Не удалось передать файл Windows: ${result.error}`, 'error');
-    return;
-  }
-  if (!item) return;
-  if (!result.sourceExists) {
+  const removed = [];
+  const errors = [];
+  for (const itemResult of results) {
+    const item = draggedItems.find((entry) => entry.path === itemResult.path)
+      || state.allMedia.find((entry) => entry.path === itemResult.path);
+    if (itemResult.error) errors.push(itemResult.error);
+    if (!item || itemResult.sourceExists) continue;
+    removed.push(item);
     state.preparedPaths.delete(item.path);
     state.warmedPaths.delete(item.path);
-    state.allMedia = state.allMedia.filter((entry) => entry.path !== item.path);
+    state.allMedia = state.allMedia.filter((entry) => !isPathWithinDirectory(entry.path, item.path));
     removeFromPreviewHistory(item.path);
-    if (state.selected?.path === item.path) {
+    removeFavoritesWithin(item.path);
+    state.selectedPaths = new Set([...state.selectedPaths].filter((itemPath) => !isPathWithinDirectory(itemPath, item.path)));
+    if (state.selected && isPathWithinDirectory(state.selected.path, item.path)) {
       state.selected = null;
-      renderEmptyPreview();
     }
-    applyMediaFilters({ resetScroll: false });
-    await refreshTreeDirectory(parentPath(item.path));
-    showToast(result.removedOriginal
-      ? 'Файл скопирован, исходник перемещён в Корзину'
-      : 'Файл перемещён через Windows');
-    return;
   }
-  showToast('Исходник оставлен: системное перетаскивание завершилось слишком быстро', 'error');
+  if (removed.length) {
+    applyMediaFilters({ resetScroll: false });
+    await renderTree();
+    if (!state.selected) renderEmptyPreview();
+    showToast(removed.length === 1
+      ? 'Элемент передан Windows, исходник перемещён в Корзину'
+      : `${removed.length} элементов передано Windows, исходники перемещены в Корзину`);
+  }
+  if (errors.length) {
+    showToast(`Не удалось полностью завершить перенос (${errors.length}): ${errors[0]}`, 'error');
+  } else if (!removed.length && results.length) {
+    showToast('Исходники оставлены: системное перетаскивание завершилось слишком быстро', 'error');
+  }
 });
 
 function beginExternalDragAtWindowEdge() {
   if (!state.draggedItem || state.externalDragStarted || state.moveInProgress) return;
+  const items = state.draggedItems.length ? [...state.draggedItems] : [state.draggedItem];
   state.externalDragStarted = true;
-  state.externalDraggedItem = state.draggedItem;
-  window.lumina.startExternalDrag(state.draggedItem.path);
+  state.externalDraggedItems = items;
+  window.lumina.startExternalDrag(items.map((item) => item.path));
 }
 
 window.addEventListener('dragover', (event) => {

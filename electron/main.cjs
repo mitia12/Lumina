@@ -227,6 +227,11 @@ function pathsEqual(left, right) {
     : left === right;
 }
 
+function isPathInside(candidatePath, parentPath) {
+  const relative = path.relative(path.resolve(parentPath), path.resolve(candidatePath));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 function validateEntryName(value) {
   if (typeof value !== 'string') throw new Error('Введите имя.');
   const name = value.trim();
@@ -494,6 +499,10 @@ async function chooseRoot() {
   }
   thumbnailCache.clear();
   syncRootWatchers();
+  return serializeRoots();
+}
+
+function serializeRoots() {
   return currentRoots.map((rootPath) => ({
     name: path.basename(rootPath) || rootPath,
     path: rootPath,
@@ -581,8 +590,12 @@ app.whenReady().then(async () => {
   externalDragIcon = await app.getFileIcon(process.execPath, { size: 'large' }).catch(() => nativeImage.createEmpty());
   pruneCacheDirectory(previewCacheDirectory, '.webm', PREVIEW_CACHE_LIMIT).catch(() => {});
   pruneCacheDirectory(thumbnailCacheDirectory, '.jpg', THUMBNAIL_CACHE_LIMIT).catch(() => {});
-  if (!app.isPackaged && process.env.LUMINA_TEST_ROOT) {
-    currentRoots = process.env.LUMINA_TEST_ROOT
+  const testRootsValue = !app.isPackaged
+    ? (process.env.LUMINA_TEST_ROOT
+      || process.argv.find((argument) => argument.startsWith('--lumina-test-roots='))?.slice('--lumina-test-roots='.length))
+    : null;
+  if (testRootsValue) {
+    currentRoots = testRootsValue
       .split(path.delimiter)
       .filter(Boolean)
       .map((rootPath) => path.resolve(rootPath));
@@ -596,6 +609,22 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle('folder:choose', chooseRoot);
+  ipcMain.handle('root:list', () => serializeRoots());
+  ipcMain.handle('root:detach', async (_event, rootPath) => {
+    if (typeof rootPath !== 'string' || !isOpenedRoot(rootPath)) throw new Error('Папка не является открытым корнем.');
+    const safeRoot = path.resolve(rootPath);
+    currentRoots = currentRoots.filter((entry) => !pathsEqual(entry, safeRoot));
+    syncRootWatchers();
+    return serializeRoots();
+  });
+  ipcMain.handle('root:trash', async (_event, rootPath) => {
+    if (typeof rootPath !== 'string' || !isOpenedRoot(rootPath)) throw new Error('Папка не является открытым корнем.');
+    const safeRoot = path.resolve(rootPath);
+    await shell.trashItem(safeRoot);
+    currentRoots = currentRoots.filter((entry) => !isPathInside(entry, safeRoot));
+    syncRootWatchers();
+    return serializeRoots();
+  });
   ipcMain.handle('folder:children', (_event, directoryPath) => readVisibleChildren(directoryPath));
   ipcMain.handle('folder:media', (_event, directoryPath, recursive) => listMedia(directoryPath, Boolean(recursive)));
   ipcMain.handle('folder:prepare', (event, items, requestId) => prepareMediaItems(event.sender, items, requestId));
@@ -631,20 +660,25 @@ app.whenReady().then(async () => {
     const safeItemPath = requireSafePath(itemPath);
     const safeDestinationPath = requireSafePath(destinationPath);
     const safeViewDirectoryPath = requireSafePath(viewDirectoryPath);
+    if (isOpenedRoot(safeItemPath)) throw new Error('Корневую папку нельзя перемещать. Сначала открепите её.');
+    const sourceStat = await fs.stat(safeItemPath);
     const destinationStat = await fs.stat(safeDestinationPath);
     if (!destinationStat.isDirectory()) throw new Error('Цель перемещения не является папкой.');
+    if (sourceStat.isDirectory() && isPathInside(safeDestinationPath, safeItemPath)) {
+      throw new Error('Нельзя переместить папку внутрь самой себя.');
+    }
 
     const fileName = path.basename(safeItemPath);
     const targetPath = requireSafePath(path.join(safeDestinationPath, fileName));
     const samePath = pathsEqual(safeItemPath, targetPath);
-    const kind = mediaKind(fileName) || 'file';
+    const kind = sourceStat.isDirectory() ? 'directory' : (mediaKind(fileName) || 'file');
     const serializeMovedItem = () => ({
       name: fileName,
       path: targetPath,
       directory: safeDestinationPath,
       relativeDirectory: path.relative(safeViewDirectoryPath, safeDestinationPath) || '.',
       kind,
-      url: toMediaUrl(targetPath),
+      url: kind === 'directory' ? null : toMediaUrl(targetPath),
       thumbnailUrl: kind === 'image' || kind === 'video' || kind === 'audio' ? toThumbnailUrl(targetPath) : null,
       previewUrl: kind === 'video' ? toPreviewUrl(targetPath) : null
     });
@@ -661,18 +695,25 @@ app.whenReady().then(async () => {
       await fs.rename(safeItemPath, targetPath);
     } catch (error) {
       if (error.code !== 'EXDEV') throw error;
-      const sourceStat = await fs.stat(safeItemPath);
       let targetCreated = false;
       try {
-        await fs.copyFile(safeItemPath, targetPath, fsConstants.COPYFILE_EXCL);
-        targetCreated = true;
-        const [copiedStat, currentSourceStat] = await Promise.all([fs.stat(targetPath), fs.stat(safeItemPath)]);
-        if (copiedStat.size !== sourceStat.size
-          || currentSourceStat.size !== sourceStat.size
-          || currentSourceStat.mtimeMs !== sourceStat.mtimeMs) {
-          throw new Error('Файл изменился во время копирования. Исходник сохранён.');
+        if (sourceStat.isDirectory()) {
+          // fs.cp may create part of the directory before it throws.
+          targetCreated = true;
+          await fs.cp(safeItemPath, targetPath, { recursive: true, errorOnExist: true, force: false });
+        } else {
+          await fs.copyFile(safeItemPath, targetPath, fsConstants.COPYFILE_EXCL);
+          targetCreated = true;
         }
-        await fs.utimes(targetPath, sourceStat.atime, sourceStat.mtime).catch(() => {});
+        if (!sourceStat.isDirectory()) {
+          const [copiedStat, currentSourceStat] = await Promise.all([fs.stat(targetPath), fs.stat(safeItemPath)]);
+          if (copiedStat.size !== sourceStat.size
+            || currentSourceStat.size !== sourceStat.size
+            || currentSourceStat.mtimeMs !== sourceStat.mtimeMs) {
+            throw new Error('Файл изменился во время копирования. Исходник сохранён.');
+          }
+          await fs.utimes(targetPath, sourceStat.atime, sourceStat.mtime).catch(() => {});
+        }
         try {
           await shell.trashItem(safeItemPath);
         } catch (trashError) {
@@ -680,7 +721,7 @@ app.whenReady().then(async () => {
         }
       } catch (copyError) {
         const sourceExists = await fs.access(safeItemPath).then(() => true, () => false);
-        if (targetCreated && sourceExists) await fs.rm(targetPath, { force: true }).catch(() => {});
+        if (targetCreated && sourceExists) await fs.rm(targetPath, { recursive: true, force: true }).catch(() => {});
         throw copyError;
       }
     }
@@ -809,53 +850,65 @@ app.whenReady().then(async () => {
     const updatedStat = await fs.stat(safePath);
     return { modifiedAt: updatedStat.mtimeMs, size: updatedStat.size };
   });
-  ipcMain.on('item:start-external-drag', (event, itemPath) => {
-    let safePath;
+  ipcMain.on('item:start-external-drag', (event, itemPaths) => {
     const sender = event.sender;
+    let safePaths = [];
     try {
-      safePath = requireSafePath(itemPath);
+      const requestedPaths = Array.isArray(itemPaths) ? itemPaths : [itemPaths];
+      if (!requestedPaths.length || requestedPaths.length > 256) {
+        throw new Error('Для переноса выберите от 1 до 256 элементов.');
+      }
+      safePaths = [...new Set(requestedPaths.map((itemPath) => requireSafePath(itemPath)))];
       const startedAt = Date.now();
-      sender.startDrag({ file: safePath, icon: externalDragIcon || nativeImage.createEmpty() });
+      const dragFiles = safePaths.length === 1 ? { file: safePaths[0] } : { files: safePaths };
+      sender.startDrag({ ...dragFiles, icon: externalDragIcon || nativeImage.createEmpty() });
       const dragDurationMs = Date.now() - startedAt;
       void (async () => {
-        let sourceExists = true;
-        let removedOriginal = false;
-        try {
-          await fs.access(safePath);
-        } catch {
-          sourceExists = false;
-        }
-
-        // An instant return means Windows did not start a real native drag.
-        if (sourceExists && dragDurationMs >= 120) {
-          await shell.trashItem(safePath);
-          sourceExists = false;
-          removedOriginal = true;
+        const items = [];
+        for (const safePath of safePaths) {
+          let sourceExists = await fs.access(safePath).then(() => true, () => false);
+          let removedOriginal = false;
+          let error = null;
+          // An instant return means Windows did not start a real native drag.
+          if (sourceExists && dragDurationMs >= 120) {
+            try {
+              await shell.trashItem(safePath);
+              sourceExists = false;
+              removedOriginal = true;
+            } catch (trashError) {
+              error = `Элемент скопирован, но не удалось убрать исходник: ${trashError.message || String(trashError)}`;
+            }
+          }
+          items.push({ path: safePath, sourceExists, removedOriginal, error });
         }
 
         if (!sender.isDestroyed()) {
-          sender.send('item:external-drag-ended', {
-            path: safePath,
-            sourceExists,
-            removedOriginal,
-            dragDurationMs
-          });
+          sender.send('item:external-drag-ended', { items, dragDurationMs });
         }
       })().catch((error) => {
         if (!sender.isDestroyed()) {
           sender.send('item:external-drag-ended', {
-            path: safePath,
-            sourceExists: true,
-            error: `Файл скопирован, но не удалось убрать исходник: ${error.message || String(error)}`
+            items: safePaths.map((safePath) => ({
+              path: safePath,
+              sourceExists: true,
+              removedOriginal: false,
+              error: `Не удалось завершить перенос: ${error.message || String(error)}`
+            })),
+            dragDurationMs
           });
         }
       });
     } catch (error) {
       if (!sender.isDestroyed()) {
         sender.send('item:external-drag-ended', {
-          path: safePath || itemPath,
-          sourceExists: true,
-          error: error.message || String(error)
+          items: (safePaths.length ? safePaths : (Array.isArray(itemPaths) ? itemPaths : [itemPaths]))
+            .filter(Boolean)
+            .map((itemPath) => ({
+              path: itemPath,
+              sourceExists: true,
+              removedOriginal: false,
+              error: error.message || String(error)
+            }))
         });
       }
     }

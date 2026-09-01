@@ -398,8 +398,52 @@ body.resizing {
 .preview-content {
   min-height: 0;
   overflow: auto;
-  scrollbar-color: #303643 transparent;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.tree-scroll::-webkit-scrollbar,
+.gallery-scroll::-webkit-scrollbar,
+.preview-content::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.custom-scrollbar {
+  position: fixed;
+  z-index: 45;
+  display: none;
+  width: 9px;
+  padding: 1px 2px;
+  border-radius: 999px;
+  background: transparent;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.custom-scrollbar.visible {
+  display: block;
+}
+
+.custom-scrollbar-thumb {
+  width: 5px;
+  min-height: 32px;
+  border-radius: 999px;
+  background: #303643;
+  cursor: ns-resize;
+  transition: width 100ms ease, background 100ms ease;
+  touch-action: none;
+}
+
+.custom-scrollbar:hover .custom-scrollbar-thumb,
+.custom-scrollbar-thumb.dragging {
+  width: 7px;
+  background: color-mix(in srgb, var(--accent) 58%, #303643);
+}
+
+body.scrollbar-dragging {
+  cursor: ns-resize;
+  user-select: none;
 }
 
 .tree-scroll {
@@ -415,6 +459,44 @@ body.resizing {
   margin-top: 9px;
   padding-top: 9px;
   border-top: 1px solid var(--line);
+}
+
+.tree-favorites {
+  margin: 0 0 11px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tree-favorites-heading {
+  display: flex;
+  height: 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.tree-favorites-heading svg,
+.favorite-marker svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+.favorite-row {
+  min-width: 210px;
+  padding-left: 8px;
+}
+
+.favorite-marker {
+  width: 17px;
+  flex: 0 0 17px;
+  margin-right: 5px;
+  color: var(--accent);
 }
 
 .library-root-node > .tree-row {
