@@ -1642,9 +1642,12 @@ window.lumina.onExternalDragEnded(async (result) => {
     }
     applyMediaFilters({ resetScroll: false });
     await refreshTreeDirectory(parentPath(item.path));
-    showToast('Файл перемещён через Windows');
+    showToast(result.removedOriginal
+      ? 'Файл скопирован, исходник перемещён в Корзину'
+      : 'Файл перемещён через Windows');
     return;
   }
+  showToast('Исходник оставлен: системное перетаскивание завершилось слишком быстро', 'error');
 });
 
 function beginExternalDragAtWindowEdge() {

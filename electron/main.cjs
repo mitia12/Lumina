@@ -700,20 +700,48 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('item:start-external-drag', (event, itemPath) => {
     let safePath;
+    const sender = event.sender;
     try {
       safePath = requireSafePath(itemPath);
-      event.sender.startDrag({ file: safePath, icon: externalDragIcon || nativeImage.createEmpty() });
-      fs.access(safePath).then(
-        () => {
-          if (!event.sender.isDestroyed()) event.sender.send('item:external-drag-ended', { path: safePath, sourceExists: true });
-        },
-        () => {
-          if (!event.sender.isDestroyed()) event.sender.send('item:external-drag-ended', { path: safePath, sourceExists: false });
+      const startedAt = Date.now();
+      sender.startDrag({ file: safePath, icon: externalDragIcon || nativeImage.createEmpty() });
+      const dragDurationMs = Date.now() - startedAt;
+      void (async () => {
+        let sourceExists = true;
+        let removedOriginal = false;
+        try {
+          await fs.access(safePath);
+        } catch {
+          sourceExists = false;
         }
-      );
+
+        // An instant return means Windows did not start a real native drag.
+        if (sourceExists && dragDurationMs >= 120) {
+          await shell.trashItem(safePath);
+          sourceExists = false;
+          removedOriginal = true;
+        }
+
+        if (!sender.isDestroyed()) {
+          sender.send('item:external-drag-ended', {
+            path: safePath,
+            sourceExists,
+            removedOriginal,
+            dragDurationMs
+          });
+        }
+      })().catch((error) => {
+        if (!sender.isDestroyed()) {
+          sender.send('item:external-drag-ended', {
+            path: safePath,
+            sourceExists: true,
+            error: `Файл скопирован, но не удалось убрать исходник: ${error.message || String(error)}`
+          });
+        }
+      });
     } catch (error) {
-      if (!event.sender.isDestroyed()) {
-        event.sender.send('item:external-drag-ended', {
+      if (!sender.isDestroyed()) {
+        sender.send('item:external-drag-ended', {
           path: safePath || itemPath,
           sourceExists: true,
           error: error.message || String(error)
