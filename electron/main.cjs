@@ -31,8 +31,8 @@ const MEDIA_TYPES = {
 };
 
 let mainWindow;
-let currentRoot = null;
-let rootWatcher = null;
+let currentRoots = [];
+const rootWatchers = new Map();
 let watchTimer = null;
 const thumbnailCache = new Map();
 const MAX_THUMBNAILS = 300;
@@ -200,11 +200,18 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 function isWithinRoot(targetPath) {
-  if (!currentRoot || typeof targetPath !== 'string') return false;
-  const root = path.resolve(currentRoot);
+  if (!currentRoots.length || typeof targetPath !== 'string') return false;
   const target = path.resolve(targetPath);
-  const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  return currentRoots.some((rootPath) => {
+    const root = path.resolve(rootPath);
+    const relative = path.relative(root, target);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  });
+}
+
+function isOpenedRoot(targetPath) {
+  const target = path.resolve(targetPath);
+  return currentRoots.some((rootPath) => pathsEqual(path.resolve(rootPath), target));
 }
 
 function requireSafePath(targetPath) {
@@ -438,47 +445,60 @@ async function listMedia(directoryPath, recursive) {
   return media.sort((left, right) => nameCollator.compare(left.name, right.name));
 }
 
-function closeRootWatcher() {
+function closeRootWatchers() {
   clearTimeout(watchTimer);
   watchTimer = null;
-  if (rootWatcher) rootWatcher.close();
-  rootWatcher = null;
+  for (const watcher of rootWatchers.values()) watcher.close();
+  rootWatchers.clear();
 }
 
-function startRootWatcher() {
-  closeRootWatcher();
-  if (!currentRoot) return;
-  try {
-    rootWatcher = watch(currentRoot, { recursive: true }, () => {
-      thumbnailCache.clear();
-      clearTimeout(watchTimer);
-      watchTimer = setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('filesystem:changed');
-        }
-      }, 500);
-    });
-    rootWatcher.on('error', () => closeRootWatcher());
-  } catch {
-    // Просмотрщик продолжит работать без автоматического обновления.
+function syncRootWatchers() {
+  for (const [rootPath, watcher] of rootWatchers) {
+    if (currentRoots.some((entry) => pathsEqual(entry, rootPath))) continue;
+    watcher.close();
+    rootWatchers.delete(rootPath);
+  }
+  for (const rootPath of currentRoots) {
+    if ([...rootWatchers.keys()].some((entry) => pathsEqual(entry, rootPath))) continue;
+    try {
+      const watcher = watch(rootPath, { recursive: true }, () => {
+        thumbnailCache.clear();
+        clearTimeout(watchTimer);
+        watchTimer = setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('filesystem:changed');
+          }
+        }, 500);
+      });
+      watcher.on('error', () => {
+        watcher.close();
+        rootWatchers.delete(rootPath);
+      });
+      rootWatchers.set(rootPath, watcher);
+    } catch {
+      // Просмотрщик продолжит работать без автоматического обновления этой папки.
+    }
   }
 }
 
 async function chooseRoot() {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Открыть папку с файлами',
-    properties: ['openDirectory']
+    title: 'Добавить папки с файлами',
+    properties: ['openDirectory', 'multiSelections']
   });
-  if (result.canceled || !result.filePaths[0]) return null;
+  if (result.canceled || !result.filePaths.length) return null;
 
-  currentRoot = path.resolve(result.filePaths[0]);
+  for (const selectedPath of result.filePaths) {
+    const resolvedPath = path.resolve(selectedPath);
+    if (!currentRoots.some((rootPath) => pathsEqual(rootPath, resolvedPath))) currentRoots.push(resolvedPath);
+  }
   thumbnailCache.clear();
-  startRootWatcher();
-  return {
-    name: path.basename(currentRoot) || currentRoot,
-    path: currentRoot,
+  syncRootWatchers();
+  return currentRoots.map((rootPath) => ({
+    name: path.basename(rootPath) || rootPath,
+    path: rootPath,
     kind: 'directory'
-  };
+  }));
 }
 
 async function prepareMediaItems(sender, items, requestId) {
@@ -562,7 +582,11 @@ app.whenReady().then(async () => {
   pruneCacheDirectory(previewCacheDirectory, '.webm', PREVIEW_CACHE_LIMIT).catch(() => {});
   pruneCacheDirectory(thumbnailCacheDirectory, '.jpg', THUMBNAIL_CACHE_LIMIT).catch(() => {});
   if (!app.isPackaged && process.env.LUMINA_TEST_ROOT) {
-    currentRoot = path.resolve(process.env.LUMINA_TEST_ROOT);
+    currentRoots = process.env.LUMINA_TEST_ROOT
+      .split(path.delimiter)
+      .filter(Boolean)
+      .map((rootPath) => path.resolve(rootPath));
+    syncRootWatchers();
   }
   protocol.handle('lumina-media', (request) => {
     const requestUrl = new URL(request.url);
@@ -586,7 +610,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('item:trash', async (_event, itemPath) => {
     const safePath = requireSafePath(itemPath);
-    if (pathsEqual(safePath, path.resolve(currentRoot))) {
+    if (isOpenedRoot(safePath)) {
       throw new Error('Нельзя удалить открытую корневую папку.');
     }
     await shell.trashItem(safePath);
@@ -633,7 +657,33 @@ app.whenReady().then(async () => {
       if (error.code !== 'ENOENT') throw error;
     }
 
-    await fs.rename(safeItemPath, targetPath);
+    try {
+      await fs.rename(safeItemPath, targetPath);
+    } catch (error) {
+      if (error.code !== 'EXDEV') throw error;
+      const sourceStat = await fs.stat(safeItemPath);
+      let targetCreated = false;
+      try {
+        await fs.copyFile(safeItemPath, targetPath, fsConstants.COPYFILE_EXCL);
+        targetCreated = true;
+        const [copiedStat, currentSourceStat] = await Promise.all([fs.stat(targetPath), fs.stat(safeItemPath)]);
+        if (copiedStat.size !== sourceStat.size
+          || currentSourceStat.size !== sourceStat.size
+          || currentSourceStat.mtimeMs !== sourceStat.mtimeMs) {
+          throw new Error('Файл изменился во время копирования. Исходник сохранён.');
+        }
+        await fs.utimes(targetPath, sourceStat.atime, sourceStat.mtime).catch(() => {});
+        try {
+          await shell.trashItem(safeItemPath);
+        } catch (trashError) {
+          throw new Error(`Не удалось удалить исходник после копирования: ${trashError.message || String(trashError)}`);
+        }
+      } catch (copyError) {
+        const sourceExists = await fs.access(safeItemPath).then(() => true, () => false);
+        if (targetCreated && sourceExists) await fs.rm(targetPath, { force: true }).catch(() => {});
+        throw copyError;
+      }
+    }
     return { moved: true, item: serializeMovedItem() };
   });
   ipcMain.handle('item:import-external', async (_event, sourcePaths, destinationPath) => {
@@ -699,7 +749,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('item:rename', async (_event, itemPath, newNameValue) => {
     const safeItemPath = requireSafePath(itemPath);
-    if (pathsEqual(safeItemPath, path.resolve(currentRoot))) {
+    if (isOpenedRoot(safeItemPath)) {
       throw new Error('Нельзя переименовать открытую корневую папку.');
     }
     const newName = validateEntryName(newNameValue);
@@ -818,6 +868,6 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  closeRootWatcher();
+  closeRootWatchers();
   if (process.platform !== 'darwin') app.quit();
 });

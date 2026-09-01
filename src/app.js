@@ -85,6 +85,7 @@ const storedTileSize = Number(localStorage.getItem('lumina:tile-size')) || 230;
 const storedConfirmDelete = localStorage.getItem('lumina:confirm-delete');
 const storedQueueAutoplay = localStorage.getItem('lumina:queue-autoplay');
 const state = {
+  roots: [],
   root: null,
   currentDirectory: null,
   media: [],
@@ -267,6 +268,20 @@ function isPathWithinDirectory(candidatePath, directoryPath) {
   return candidate === directory || candidate.startsWith(`${directory}\\`);
 }
 
+function rootForPath(candidatePath) {
+  return state.roots
+    .filter((root) => isPathWithinDirectory(candidatePath, root.path))
+    .sort((left, right) => right.path.length - left.path.length)[0] || null;
+}
+
+function isLibraryRootPath(candidatePath) {
+  return state.roots.some((root) => normalizeComparablePath(root.path) === normalizeComparablePath(candidatePath));
+}
+
+function updateRootTitle() {
+  dom.rootTitle.textContent = state.roots.length > 1 ? `Папки · ${state.roots.length}` : (state.roots[0]?.name || 'Папки');
+}
+
 function replacePathPrefix(candidatePath, oldPath, newPath) {
   if (!isPathWithinDirectory(candidatePath, oldPath)) return candidatePath;
   return newPath + candidatePath.slice(oldPath.length);
@@ -299,32 +314,54 @@ function setGalleryView(view) {
 
 async function openFolder() {
   try {
-    const root = await window.lumina.chooseFolder();
-    if (!root) return;
-    state.root = root;
-    state.currentDirectory = root.path;
-    state.selected = null;
-    state.media = [];
-    state.allMedia = [];
-    state.preparedPaths = new Set();
-    state.warmedPaths = new Set();
-    dom.rootTitle.textContent = root.name;
-    renderEmptyPreview();
+    const roots = await window.lumina.chooseFolder();
+    if (!roots?.length) return;
+    const previousPaths = new Set(state.roots.map((root) => normalizeComparablePath(root.path)));
+    const addedRoots = roots.filter((root) => !previousPaths.has(normalizeComparablePath(root.path)));
+    const firstOpen = state.roots.length === 0;
+    state.roots = roots;
+    if (firstOpen || !state.currentDirectory) {
+      state.root = addedRoots[0] || roots[0];
+      state.currentDirectory = state.root.path;
+      state.selected = null;
+      state.media = [];
+      state.allMedia = [];
+      state.preparedPaths = new Set();
+      state.warmedPaths = new Set();
+      renderEmptyPreview();
+    } else {
+      state.root = rootForPath(state.currentDirectory) || roots[0];
+    }
+    updateRootTitle();
     await renderTree();
-    await loadMedia({ prepareRoot: true });
+    await loadMedia({ prepareRoots: true });
+    if (!firstOpen && addedRoots.length) {
+      showToast(addedRoots.length === 1
+        ? `Папка «${addedRoots[0].name}» добавлена`
+        : `Добавлено папок: ${addedRoots.length}`);
+    }
   } catch (error) {
-    showToast(`Не удалось открыть папку: ${formatError(error)}`, 'error');
+    showToast(`Не удалось добавить папку: ${formatError(error)}`, 'error');
   }
 }
 
 async function renderTree() {
-  if (!state.root) return;
+  if (!state.roots.length) return;
   dom.tree.replaceChildren();
-  const rootNode = createTreeNode(state.root, 0, true);
-  dom.tree.append(rootNode);
-  const toggle = rootNode.querySelector('.tree-chevron');
-  const children = rootNode.querySelector('.tree-children');
-  await expandTreeNode(state.root, toggle, children, 1);
+  const fragment = document.createDocumentFragment();
+  const rootNodes = state.roots.map((root) => {
+    const rootNode = createTreeNode(root, 0, true);
+    rootNode.classList.add('library-root-node');
+    fragment.append(rootNode);
+    return { root, rootNode };
+  });
+  dom.tree.append(fragment);
+  await Promise.all(rootNodes.map(({ root, rootNode }) => expandTreeNode(
+    root,
+    rootNode.querySelector('.tree-chevron'),
+    rootNode.querySelector('.tree-children'),
+    1
+  )));
   updateSelectionClasses();
 }
 
@@ -562,6 +599,8 @@ async function moveItemToDirectory(item, destinationPath) {
 }
 
 async function selectDirectory(directoryPath) {
+  const nextRoot = rootForPath(directoryPath);
+  if (nextRoot) state.root = nextRoot;
   if (state.currentDirectory === directoryPath) {
     updateSelectionClasses();
     return;
@@ -593,10 +632,11 @@ async function loadMedia(options = {}) {
 
     let libraryMedia = media;
     let itemsToPrepare = media.filter((item) => !state.preparedPaths.has(item.path));
-    if (options.prepareRoot && state.root) {
-      dom.loadingLabel.textContent = 'Сканируем всю медиатеку…';
-      libraryMedia = await window.lumina.getMedia(state.root.path, true);
+    if (options.prepareRoots && state.roots.length) {
+      dom.loadingLabel.textContent = state.roots.length > 1 ? 'Сканируем все открытые папки…' : 'Сканируем всю медиатеку…';
+      const rootMedia = await Promise.all(state.roots.map((root) => window.lumina.getMedia(root.path, true)));
       if (requestId !== state.requestId) return;
+      libraryMedia = [...new Map(rootMedia.flat().map((item) => [normalizeComparablePath(item.path), item])).values()];
       itemsToPrepare = libraryMedia.filter((item) => !state.preparedPaths.has(item.path));
     }
 
@@ -613,7 +653,7 @@ async function loadMedia(options = {}) {
       for (const item of itemsToPrepare) state.preparedPaths.add(item.path);
     }
 
-    const itemsToWarm = (options.prepareRoot ? libraryMedia : itemsToPrepare)
+    const itemsToWarm = (options.prepareRoots ? libraryMedia : itemsToPrepare)
       .filter((item) => !state.warmedPaths.has(item.path));
     if (itemsToWarm.length) {
       await warmMediaCache(itemsToWarm, requestId, options.quiet);
@@ -1281,7 +1321,7 @@ function showFileContextMenu(event, item) {
     return;
   }
   state.contextItem = item;
-  const isRoot = normalizeComparablePath(item.path) === normalizeComparablePath(state.root?.path);
+  const isRoot = isLibraryRootPath(item.path);
   dom.contextRename.disabled = isRoot;
   dom.contextDelete.disabled = isRoot;
   dom.contextCreateFolder.querySelector('span').textContent = item.kind === 'directory'
@@ -1657,7 +1697,7 @@ let filesystemRefreshTimer;
 window.lumina.onFilesystemChanged(() => {
   clearTimeout(filesystemRefreshTimer);
   filesystemRefreshTimer = setTimeout(async () => {
-    if (!state.root) return;
+    if (!state.roots.length) return;
     await loadMedia({ quiet: true });
   }, 1200);
 });
@@ -1748,7 +1788,7 @@ dom.galleryScroll.addEventListener('drop', (event) => {
 });
 
 dom.tree.addEventListener('dragover', (event) => {
-  if (!isExternalFileDrag(event) || state.moveInProgress || !state.root) return;
+  if (!isExternalFileDrag(event) || state.moveInProgress || !state.roots.length) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = 'move';
   dom.tree.classList.add('external-drop-target');

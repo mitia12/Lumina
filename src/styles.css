@@ -355,6 +355,21 @@ body.resizing {
   min-width: max-content;
 }
 
+.library-root-node + .library-root-node {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.library-root-node > .tree-row {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.library-root-node > .tree-row .tree-icon {
+  color: var(--accent);
+}
+
 .tree-row {
   display: flex;
   align-items: center;
