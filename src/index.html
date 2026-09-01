@@ -137,9 +137,16 @@
               <div class="eyebrow">Выбранный файл</div>
               <h2>Предпросмотр</h2>
             </div>
-            <button class="icon-button inner-collapse" id="right-collapse" aria-label="Свернуть правую панель" title="Свернуть">
-              <svg viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></svg>
-            </button>
+            <div class="preview-heading-actions">
+              <label class="preview-history-toggle" title="Показывать историю выбранных файлов">
+                <input type="checkbox" id="preview-history-toggle" />
+                <span class="history-check" aria-hidden="true"></span>
+                <span>История</span>
+              </label>
+              <button class="icon-button inner-collapse" id="right-collapse" aria-label="Свернуть правую панель" title="Свернуть">
+                <svg viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></svg>
+              </button>
+            </div>
           </div>
           <div class="preview-content" id="preview-content">
             <div class="panel-placeholder">

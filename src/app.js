@@ -17,6 +17,7 @@ const MEDIA_LABELS = { image: 'Фото', video: 'Видео', audio: 'Ауди�
 const GRID_GAP = 14;
 const CARD_CAPTION_HEIGHT = 54;
 const OVERSCAN_ROWS = 4;
+const MAX_PREVIEW_HISTORY = 100;
 const virtualCards = new Map();
 
 const dom = {
@@ -43,6 +44,7 @@ const dom = {
   folderEmptyTitle: document.querySelector('#folder-empty-title'),
   folderEmptyCopy: document.querySelector('#folder-empty-copy'),
   preview: document.querySelector('#preview-content'),
+  previewHistoryToggle: document.querySelector('#preview-history-toggle'),
   leftToggle: document.querySelector('#left-panel-toggle'),
   rightToggle: document.querySelector('#right-panel-toggle'),
   leftCollapse: document.querySelector('#left-collapse'),
@@ -84,6 +86,7 @@ const dom = {
 const storedTileSize = Number(localStorage.getItem('lumina:tile-size')) || 230;
 const storedConfirmDelete = localStorage.getItem('lumina:confirm-delete');
 const storedQueueAutoplay = localStorage.getItem('lumina:queue-autoplay');
+const storedPreviewHistory = localStorage.getItem('lumina:preview-history');
 const state = {
   roots: [],
   root: null,
@@ -92,6 +95,8 @@ const state = {
   allMedia: [],
   mediaFilters: getStoredMediaFilters(),
   selected: null,
+  previewHistory: [],
+  previewHistoryEnabled: storedPreviewHistory === 'true',
   recursive: false,
   autoplay: false,
   requestId: 0,
@@ -578,11 +583,13 @@ async function moveItemToDirectory(item, destinationPath) {
     state.allMedia = remainsVisible
       ? state.allMedia.map((entry) => entry.path === oldPath ? movedItem : entry)
       : state.allMedia.filter((entry) => entry.path !== oldPath);
+    replacePreviewHistoryItem(oldPath, movedItem);
 
     if (state.selected?.path === oldPath) {
       if (remainsVisible) {
         state.selected = movedItem;
-        renderPreview(movedItem);
+        if (state.previewHistoryEnabled) renderPreviewHistory();
+        else renderPreview(movedItem);
       } else {
         state.selected = null;
         renderEmptyPreview();
@@ -663,6 +670,7 @@ async function loadMedia(options = {}) {
 
     state.allMedia = media;
     if (state.selected && !media.some((item) => item.path === state.selected.path)) {
+      removeFromPreviewHistory(state.selected.path);
       state.selected = null;
       renderEmptyPreview();
     }
@@ -1066,7 +1074,13 @@ function createMediaCard(item) {
 function selectMedia(item, options = {}) {
   state.selected = item;
   updateSelectionClasses();
-  renderPreview(item, options);
+  if (state.previewHistoryEnabled) {
+    state.previewHistory = [item, ...state.previewHistory.filter((entry) => entry.path !== item.path)]
+      .slice(0, MAX_PREVIEW_HISTORY);
+    renderPreviewHistory(options);
+  } else {
+    renderPreview(item, options);
+  }
 }
 
 function updateSelectionClasses() {
@@ -1080,6 +1094,12 @@ function updateSelectionClasses() {
 }
 
 function renderEmptyPreview() {
+  if (state.previewHistoryEnabled && state.previewHistory.length) {
+    renderPreviewHistory();
+    updateSelectionClasses();
+    return;
+  }
+  dom.preview.classList.remove('history-mode');
   dom.preview.replaceChildren();
   const placeholder = document.createElement('div');
   placeholder.className = 'panel-placeholder';
@@ -1090,6 +1110,95 @@ function renderEmptyPreview() {
     <p>Выберите файл<br>для предпросмотра</p>`;
   dom.preview.append(placeholder);
   updateSelectionClasses();
+}
+
+function createHistoryPreviewItem(item, index, options = {}) {
+  const entry = document.createElement('article');
+  entry.className = `preview-history-item${index === 0 ? ' current' : ''}`;
+  entry.dataset.path = item.path;
+
+  const stage = document.createElement('div');
+  stage.className = 'preview-history-stage';
+  if (item.kind === 'image') {
+    const image = document.createElement('img');
+    image.src = item.url;
+    image.alt = item.name;
+    image.loading = index === 0 ? 'eager' : 'lazy';
+    image.decoding = 'async';
+    stage.append(image);
+  } else if (item.kind === 'video') {
+    const video = document.createElement('video');
+    video.src = item.url;
+    video.poster = item.thumbnailUrl || '';
+    video.controls = true;
+    video.preload = index === 0 ? 'metadata' : 'none';
+    if (index === 0) video.addEventListener('ended', () => playNextInQueue(item));
+    stage.append(video);
+    if (index === 0 && options.autoplay) video.play().catch(() => {});
+  } else if (item.kind === 'audio') {
+    stage.classList.add('audio-history-stage');
+    const artwork = document.createElement('div');
+    artwork.className = 'history-audio-art';
+    artwork.innerHTML = ICONS.audio;
+    if (item.thumbnailUrl) {
+      const cover = document.createElement('img');
+      cover.src = item.thumbnailUrl;
+      cover.alt = '';
+      cover.loading = index === 0 ? 'eager' : 'lazy';
+      cover.addEventListener('error', () => cover.remove(), { once: true });
+      artwork.append(cover);
+    }
+    const audio = document.createElement('audio');
+    audio.src = item.url;
+    audio.controls = true;
+    audio.preload = index === 0 ? 'metadata' : 'none';
+    if (index === 0) audio.addEventListener('ended', () => playNextInQueue(item));
+    stage.append(artwork, audio);
+    if (index === 0 && options.autoplay) audio.play().catch(() => {});
+  } else {
+    stage.classList.add('file-history-stage');
+    const artwork = document.createElement('div');
+    artwork.className = `history-file-art${isTextFile(item) ? ' text' : ''}`;
+    const label = isTextFile(item) ? (/\.md$/i.test(item.name) ? 'MD' : 'TXT') : 'Файл';
+    artwork.innerHTML = `${isTextFile(item) ? ICONS.text : ICONS.file}<span>${label}</span>`;
+    stage.append(artwork);
+  }
+
+  const name = document.createElement('h3');
+  name.className = 'preview-history-name';
+  name.textContent = item.name;
+  entry.append(stage, name);
+  return entry;
+}
+
+function renderPreviewHistory(options = {}) {
+  dom.preview.classList.add('history-mode');
+  const list = document.createElement('div');
+  list.className = 'preview-history-list';
+  if (!state.previewHistory.length) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'panel-placeholder';
+    placeholder.innerHTML = `
+      <div class="placeholder-icon eye">
+        <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>
+      </div>
+      <p>Выбирайте файлы — новые будут появляться сверху</p>`;
+    list.append(placeholder);
+  } else {
+    list.append(...state.previewHistory.map((item, index) => createHistoryPreviewItem(item, index, options)));
+  }
+  dom.preview.replaceChildren(list);
+}
+
+function removeFromPreviewHistory(itemPath) {
+  const previousLength = state.previewHistory.length;
+  state.previewHistory = state.previewHistory.filter((entry) => !isPathWithinDirectory(entry.path, itemPath));
+  if (state.previewHistoryEnabled && state.previewHistory.length !== previousLength) renderPreviewHistory();
+}
+
+function replacePreviewHistoryItem(oldPath, nextItem) {
+  state.previewHistory = state.previewHistory.map((entry) => entry.path === oldPath ? nextItem : entry);
+  if (state.previewHistoryEnabled) renderPreviewHistory();
 }
 
 function playNextInQueue(item) {
@@ -1104,6 +1213,7 @@ function playNextInQueue(item) {
 }
 
 async function renderPreview(item, options = {}) {
+  dom.preview.classList.remove('history-mode');
   const active = document.createElement('div');
   active.className = 'preview-active';
 
@@ -1394,6 +1504,13 @@ async function submitNameAction(event) {
     state.warmedPaths = new Set();
     await refreshTreeDirectory(parentPath(oldPath));
     await loadMedia();
+    if (action.item.kind === 'directory') {
+      removeFromPreviewHistory(oldPath);
+    } else {
+      const renamedHistoryItem = state.allMedia.find((entry) => entry.path === result.path);
+      if (renamedHistoryItem) replacePreviewHistoryItem(oldPath, renamedHistoryItem);
+      else removeFromPreviewHistory(oldPath);
+    }
     const nextSelected = state.allMedia.find((entry) => entry.path === nextSelectedPath);
     if (nextSelected) selectMedia(nextSelected);
     showToast(`Переименовано в «${result.name}»`);
@@ -1452,6 +1569,7 @@ async function deleteItem(item, fromModal = false) {
     if (fromModal) closeDeleteModal();
     state.preparedPaths.delete(item.path);
     state.warmedPaths.delete(item.path);
+    removeFromPreviewHistory(item.path);
     if (state.selected && isPathWithinDirectory(state.selected.path, item.path)) {
       state.selected = null;
       renderEmptyPreview();
@@ -1566,6 +1684,21 @@ dom.queueAutoplayToggle.addEventListener('change', () => {
   state.queueAutoplay = dom.queueAutoplayToggle.checked;
   localStorage.setItem('lumina:queue-autoplay', String(state.queueAutoplay));
 });
+dom.previewHistoryToggle.addEventListener('change', () => {
+  state.previewHistoryEnabled = dom.previewHistoryToggle.checked;
+  localStorage.setItem('lumina:preview-history', String(state.previewHistoryEnabled));
+  if (state.previewHistoryEnabled) {
+    if (state.selected) {
+      state.previewHistory = [state.selected, ...state.previewHistory.filter((entry) => entry.path !== state.selected.path)]
+        .slice(0, MAX_PREVIEW_HISTORY);
+    }
+    renderPreviewHistory();
+  } else if (state.selected) {
+    renderPreview(state.selected);
+  } else {
+    renderEmptyPreview();
+  }
+});
 dom.mediaFilters.forEach((button) => {
   button.addEventListener('click', () => toggleMediaFilter(button.dataset.kind));
 });
@@ -1639,6 +1772,7 @@ bindResizer(dom.rightResizer, 'right');
 
 dom.confirmDeleteToggle.checked = state.confirmBeforeDelete;
 dom.queueAutoplayToggle.checked = state.queueAutoplay;
+dom.previewHistoryToggle.checked = state.previewHistoryEnabled;
 syncMediaFilters();
 
 let galleryScrollFrame;
@@ -1725,6 +1859,7 @@ window.lumina.onExternalDragEnded(async (result) => {
     state.preparedPaths.delete(item.path);
     state.warmedPaths.delete(item.path);
     state.allMedia = state.allMedia.filter((entry) => entry.path !== item.path);
+    removeFromPreviewHistory(item.path);
     if (state.selected?.path === item.path) {
       state.selected = null;
       renderEmptyPreview();
