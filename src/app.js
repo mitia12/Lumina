@@ -598,8 +598,7 @@ function createTreeNode(entry, depth, expanded = false) {
   name.className = 'tree-name';
   name.textContent = entry.name;
 
-  row.append(chevron, icon, name);
-  if (entry.kind !== 'directory') row.append(createFavoriteToggle(entry));
+  row.append(chevron, icon, name, createFavoriteToggle(entry));
   node.append(row);
 
   if (entry.kind === 'directory') {
@@ -633,10 +632,6 @@ function createTreeNode(entry, depth, expanded = false) {
       event.preventDefault();
       row.classList.add(state.draggedItem ? 'drop-target' : 'external-drop-target');
       clearDragExpand();
-      row.dragExpandTimer = setTimeout(() => {
-        children.classList.remove('hidden');
-        void expandTreeNode(entry, chevron, children, depth + 1);
-      }, 650);
     });
     row.addEventListener('dragover', (event) => {
       if ((!state.draggedItem && !isExternalFileDrag(event)) || state.moveInProgress) return;
@@ -1406,9 +1401,7 @@ function selectMediaWithModifiers(item, event) {
     const start = Math.min(anchorIndex, itemIndex);
     const end = Math.max(anchorIndex, itemIndex);
     const rangePaths = state.media.slice(start, end + 1).map((entry) => entry.path);
-    state.selectedPaths = event.ctrlKey
-      ? new Set([...state.selectedPaths, ...rangePaths])
-      : new Set(rangePaths);
+    state.selectedPaths = new Set([...state.selectedPaths, ...rangePaths]);
     setActiveMedia(item);
     return;
   }
@@ -2027,6 +2020,7 @@ async function deleteItems(items, fromModal = false) {
           state.root = rootForPath(state.currentDirectory) || state.root;
         }
       }
+      applyMediaFilters({ resetScroll: false });
       await renderTree();
       await loadMedia({ quiet: true });
       if (!state.selected) renderEmptyPreview();
