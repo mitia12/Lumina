@@ -502,25 +502,55 @@ async function openFolder() {
   }
 }
 
+function expandedTreePaths() {
+  return new Set([...dom.tree.querySelectorAll('.tree-node')]
+    .filter((node) => !node.querySelector(':scope > .tree-children')?.classList.contains('hidden'))
+    .map((node) => normalizeComparablePath(node.dataset.path)));
+}
+
+async function restoreExpandedTreeNodes(container, paths) {
+  const nodes = [...container.querySelectorAll(':scope > .tree-node')];
+  for (const node of nodes) {
+    if (!paths.has(normalizeComparablePath(node.dataset.path))) continue;
+    const row = node.querySelector(':scope > .tree-row');
+    const children = node.querySelector(':scope > .tree-children');
+    const chevron = row?.querySelector('.tree-chevron');
+    if (!row || !children || !chevron) continue;
+    children.classList.remove('hidden');
+    const depth = Number(row.style.getPropertyValue('--depth')) || 0;
+    await expandTreeNode({ path: node.dataset.path, kind: 'directory' }, chevron, children, depth + 1);
+    await restoreExpandedTreeNodes(children, paths);
+  }
+}
+
 async function renderTree() {
   if (!state.roots.length) return;
+  const hadTree = Boolean(dom.tree.querySelector('.tree-node'));
+  const pathsToRestore = hadTree
+    ? expandedTreePaths()
+    : new Set(state.roots.map((root) => normalizeComparablePath(root.path)));
   dom.tree.replaceChildren();
   const fragment = document.createDocumentFragment();
   const favorites = createFavoritesSection();
   if (favorites) fragment.append(favorites);
   const rootNodes = state.roots.map((root) => {
-    const rootNode = createTreeNode(root, 0, true);
+    const rootNode = createTreeNode(root, 0, pathsToRestore.has(normalizeComparablePath(root.path)));
     rootNode.classList.add('library-root-node');
     fragment.append(rootNode);
     return { root, rootNode };
   });
   dom.tree.append(fragment);
-  await Promise.all(rootNodes.map(({ root, rootNode }) => expandTreeNode(
-    root,
-    rootNode.querySelector('.tree-chevron'),
-    rootNode.querySelector('.tree-children'),
-    1
-  )));
+  await Promise.all(rootNodes
+    .filter(({ root }) => pathsToRestore.has(normalizeComparablePath(root.path)))
+    .map(({ root, rootNode }) => expandTreeNode(
+      root,
+      rootNode.querySelector('.tree-chevron'),
+      rootNode.querySelector('.tree-children'),
+      1
+    )));
+  for (const { rootNode } of rootNodes) {
+    await restoreExpandedTreeNodes(rootNode.querySelector(':scope > .tree-children'), pathsToRestore);
+  }
   updateSelectionClasses();
 }
 
