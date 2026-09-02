@@ -174,6 +174,29 @@ function toggleFavorite(item) {
   renderFavoritesSection();
 }
 
+function createFavoriteToggle(entry) {
+  const button = document.createElement('button');
+  button.className = 'tree-favorite-toggle';
+  button.type = 'button';
+  button.dataset.favoritePath = entry.path;
+  button.innerHTML = ICONS.star;
+  button.addEventListener('pointerdown', (event) => event.stopPropagation());
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleFavorite(entry);
+  });
+  updateFavoriteToggle(button, entry.path);
+  return button;
+}
+
+function updateFavoriteToggle(button, itemPath) {
+  const active = isFavorite(itemPath);
+  button.classList.toggle('active', active);
+  button.setAttribute('aria-pressed', String(active));
+  button.title = active ? 'Убрать из избранного' : 'Добавить в избранное';
+  button.setAttribute('aria-label', button.title);
+}
 function normalizeHex(value, fallback) {
   return /^#[0-9a-f]{6}$/i.test(value || '') ? value.toLowerCase() : fallback;
 }
@@ -522,16 +545,13 @@ function createFavoriteRow(entry) {
   row.dataset.rowPath = entry.path;
   row.dataset.kind = entry.kind;
   row.title = entry.path;
-  const marker = document.createElement('span');
-  marker.className = 'favorite-marker';
-  marker.innerHTML = ICONS.star;
   const icon = document.createElement('span');
   icon.className = 'tree-icon';
   icon.innerHTML = isTextFile(entry) ? ICONS.text : (ICONS[entry.kind] || ICONS.file);
   const name = document.createElement('span');
   name.className = 'tree-name';
   name.textContent = entry.name;
-  row.append(marker, icon, name);
+  row.append(icon, name, createFavoriteToggle(entry));
   bindEntryDrag(row, entry);
   if (entry.kind === 'directory') bindSimpleDirectoryDrop(row, entry.path);
   row.addEventListener('click', () => entry.kind === 'directory' ? selectDirectory(entry.path) : selectMedia(entry));
@@ -543,6 +563,9 @@ function renderFavoritesSection() {
   dom.tree.querySelector('.tree-favorites')?.remove();
   const section = createFavoritesSection();
   if (section) dom.tree.prepend(section);
+  document.querySelectorAll('.tree-favorite-toggle').forEach((button) => {
+    updateFavoriteToggle(button, button.dataset.favoritePath);
+  });
   updateSelectionClasses();
   updateCustomScrollbars();
 }
@@ -576,6 +599,7 @@ function createTreeNode(entry, depth, expanded = false) {
   name.textContent = entry.name;
 
   row.append(chevron, icon, name);
+  if (entry.kind !== 'directory') row.append(createFavoriteToggle(entry));
   node.append(row);
 
   if (entry.kind === 'directory') {

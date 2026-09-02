@@ -600,6 +600,8 @@ body.scrollbar-dragging {
 }
 
 .tree-name {
+  min-width: 0;
+  flex: 1 1 auto;
   max-width: 190px;
   overflow: hidden;
   font-size: 12px;
@@ -607,6 +609,56 @@ body.scrollbar-dragging {
   white-space: nowrap;
 }
 
+.tree-favorite-toggle {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 0;
+  color: color-mix(in srgb, var(--muted-bright) 58%, transparent);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  opacity: .62;
+  transition: color 120ms ease, background 120ms ease, opacity 120ms ease, transform 120ms ease;
+}
+
+.tree-favorite-toggle svg {
+  width: 15px;
+  height: 15px;
+  fill: transparent;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.tree-row:hover .tree-favorite-toggle,
+.tree-favorite-toggle:focus-visible {
+  color: var(--muted-bright);
+  opacity: 1;
+}
+
+.tree-favorite-toggle:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  transform: scale(1.06);
+}
+
+.tree-favorite-toggle.active {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.tree-favorite-toggle.active svg {
+  fill: currentColor;
+}
+
+.tree-favorite-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 1px;
+}
 .tree-loading {
   padding: 7px 8px 7px calc(34px + var(--depth, 0) * 15px);
   color: var(--muted);
