@@ -70,6 +70,7 @@ const dom = {
   contextOpenDefault: document.querySelector('#context-open-default'),
   contextReveal: document.querySelector('#context-reveal'),
   contextFavorite: document.querySelector('#context-favorite'),
+  contextLoopVideo: document.querySelector('#context-loop-video'),
   contextRename: document.querySelector('#context-rename'),
   contextCreateFolder: document.querySelector('#context-create-folder'),
   contextDetachRoot: document.querySelector('#context-detach-root'),
@@ -113,6 +114,7 @@ const state = {
   draggedItems: [],
   externalDraggedItems: [],
   externalDragStarted: false,
+  externalDragCancelled: false,
   moveInProgress: false,
   pendingDelete: null,
   confirmBeforeDelete: storedConfirmDelete === null ? true : storedConfirmDelete === 'true',
@@ -120,6 +122,8 @@ const state = {
   deletingPaths: new Set(),
   preparedPaths: new Set(),
   warmedPaths: new Set(),
+  preparingPaths: new Set(),
+  loopVideoPaths: new Set(),
   virtual: { columns: 1, cardWidth: 230, rowHeight: 240, start: -1, end: -1 },
   tileSize: Math.min(420, Math.max(140, storedTileSize)),
   leftWidth: Math.min(520, Math.max(180, Number(localStorage.getItem('lumina:left-width')) || 280)),
@@ -981,27 +985,6 @@ async function loadMedia(options = {}) {
       itemsToPrepare = libraryMedia.filter((item) => !state.preparedPaths.has(item.path));
     }
 
-    if (itemsToPrepare.length) {
-      if (!options.quiet) {
-        dom.loadingLabel.textContent = 'Подготавливаем медиатеку…';
-        dom.loadingProgressText.textContent = `0 / ${itemsToPrepare.length} файлов`;
-      }
-      await window.lumina.prepareMedia(
-        itemsToPrepare.map((item) => ({ path: item.path, kind: item.kind })),
-        requestId
-      );
-      if (requestId !== state.requestId) return;
-      for (const item of itemsToPrepare) state.preparedPaths.add(item.path);
-    }
-
-    const itemsToWarm = (options.prepareRoots ? libraryMedia : itemsToPrepare)
-      .filter((item) => !state.warmedPaths.has(item.path));
-    if (itemsToWarm.length) {
-      await warmMediaCache(itemsToWarm, requestId, options.quiet);
-      if (requestId !== state.requestId) return;
-      for (const item of itemsToWarm) state.warmedPaths.add(item.path);
-    }
-
     state.allMedia = media;
     const availablePaths = new Set(media.map((item) => item.path));
     state.selectedPaths = new Set([...state.selectedPaths].filter((itemPath) => availablePaths.has(itemPath)));
@@ -1011,6 +994,10 @@ async function loadMedia(options = {}) {
       renderEmptyPreview();
     }
     applyMediaFilters({ resetScroll: false });
+
+    const backgroundItems = itemsToPrepare.filter((item) => !state.preparingPaths.has(item.path));
+    for (const item of backgroundItems) state.preparingPaths.add(item.path);
+    if (backgroundItems.length) void prepareMediaInBackground(backgroundItems, requestId);
   } catch (error) {
     if (requestId !== state.requestId) return;
     state.media = [];
@@ -1018,6 +1005,25 @@ async function loadMedia(options = {}) {
     setGalleryView('empty');
     dom.mediaSummary.textContent = 'Не удалось прочитать папку';
     showToast(formatError(error), 'error');
+  }
+}
+
+async function prepareMediaInBackground(items, requestId) {
+  try {
+    await window.lumina.prepareMedia(
+      items.map((item) => ({ path: item.path, kind: item.kind })),
+      requestId
+    );
+    for (const item of items) state.preparedPaths.add(item.path);
+    const itemsToWarm = items.filter((item) => !state.warmedPaths.has(item.path));
+    await warmMediaCache(itemsToWarm, requestId, true);
+    if (requestId === state.requestId) {
+      for (const item of itemsToWarm) state.warmedPaths.add(item.path);
+    }
+  } catch {
+    // Cards still load lazily when optional background preparation fails.
+  } finally {
+    for (const item of items) state.preparingPaths.delete(item.path);
   }
 }
 
@@ -1052,7 +1058,7 @@ async function warmMediaCache(items, requestId, quiet) {
     while (nextIndex < resources.length && requestId === state.requestId) {
       const resource = resources[nextIndex++];
       try {
-        const response = await fetch(resource);
+        const response = await fetch(resource, { signal: AbortSignal.timeout(15000) });
         if (response.ok) await response.arrayBuffer();
       } catch {}
       completed += 1;
@@ -1499,6 +1505,7 @@ function createHistoryPreviewItem(item, index, options = {}) {
     video.src = item.url;
     video.poster = item.thumbnailUrl || '';
     video.controls = true;
+    video.loop = state.loopVideoPaths.has(item.path);
     video.preload = index === 0 ? 'metadata' : 'none';
     if (index === 0) video.addEventListener('ended', () => playNextInQueue(item));
     stage.append(video);
@@ -1536,6 +1543,7 @@ function createHistoryPreviewItem(item, index, options = {}) {
   name.className = 'preview-history-name';
   name.textContent = item.name;
   entry.append(stage, name);
+  entry.addEventListener('contextmenu', (event) => showFileContextMenu(event, item));
   return entry;
 }
 
@@ -1596,6 +1604,7 @@ async function renderPreview(item, options = {}) {
     mediaElement = document.createElement('video');
     mediaElement.src = item.url;
     mediaElement.controls = true;
+    mediaElement.loop = state.loopVideoPaths.has(item.path);
     mediaElement.preload = 'metadata';
     mediaElement.addEventListener('ended', () => playNextInQueue(item));
   } else if (item.kind === 'audio') {
@@ -1803,6 +1812,10 @@ function showFileContextMenu(event, item) {
   dom.contextRename.disabled = isRoot;
   dom.contextDelete.disabled = false;
   dom.contextDetachRoot.classList.toggle('hidden', !isRoot);
+  const loops = state.loopVideoPaths.has(item.path);
+  dom.contextLoopVideo.classList.toggle('hidden', item.kind !== 'video');
+  dom.contextLoopVideo.setAttribute('aria-pressed', String(loops));
+  dom.contextLoopVideo.querySelector('span').textContent = loops ? 'Отключить повтор видео' : 'Зациклить видео';
   dom.contextFavorite.querySelector('span').textContent = isFavorite(item.path)
     ? 'Убрать из избранного'
     : 'Добавить в избранное';
@@ -2202,6 +2215,20 @@ dom.contextFavorite.addEventListener('click', () => {
   hideFileContextMenu();
   toggleFavorite(item);
 });
+dom.contextLoopVideo.addEventListener('click', () => {
+  const item = state.contextItem;
+  hideFileContextMenu();
+  if (!item || item.kind !== 'video') return;
+  const shouldLoop = !state.loopVideoPaths.has(item.path);
+  if (shouldLoop) state.loopVideoPaths.add(item.path);
+  else state.loopVideoPaths.delete(item.path);
+
+  const historyEntry = [...dom.preview.querySelectorAll('.preview-history-item')]
+    .find((entry) => entry.dataset.path === item.path);
+  const video = historyEntry?.querySelector('video')
+    || (state.selected?.path === item.path ? dom.preview.querySelector('.preview-active video') : null);
+  if (video) video.loop = shouldLoop;
+});
 dom.contextRename.addEventListener('click', () => {
   const item = state.contextItem;
   hideFileContextMenu();
@@ -2356,6 +2383,7 @@ window.lumina.onExternalDragEnded(async (result) => {
   const draggedItems = [...state.externalDraggedItems];
   state.externalDraggedItems = [];
   state.externalDragStarted = false;
+  state.externalDragCancelled = false;
   resetFileDragState();
   const removed = [];
   const errors = [];
@@ -2385,21 +2413,38 @@ window.lumina.onExternalDragEnded(async (result) => {
   }
   if (errors.length) {
     showToast(`Не удалось полностью завершить перенос (${errors.length}): ${errors[0]}`, 'error');
-  } else if (!removed.length && results.length) {
+  } else if (!result?.cancelled && !removed.length && results.length) {
     showToast('Исходники оставлены: системное перетаскивание завершилось слишком быстро', 'error');
   }
 });
+
+function cancelReturnedExternalDrag() {
+  if (!state.externalDragStarted || state.externalDragCancelled) return;
+  state.externalDragCancelled = true;
+  window.lumina.cancelExternalDrag();
+  clearExternalDropTargets();
+}
 
 function beginExternalDragAtWindowEdge() {
   if (!state.draggedItem || state.externalDragStarted || state.moveInProgress) return;
   const items = state.draggedItems.length ? [...state.draggedItems] : [state.draggedItem];
   state.externalDragStarted = true;
+  state.externalDragCancelled = false;
   state.externalDraggedItems = items;
   window.lumina.startExternalDrag(items.map((item) => item.path));
 }
 
 window.addEventListener('dragover', (event) => {
-  if (!state.draggedItem || state.externalDragStarted) return;
+  if (state.externalDragStarted) {
+    const returnInset = 8;
+    const returnedInside = event.clientX > returnInset
+      && event.clientY > returnInset
+      && event.clientX < window.innerWidth - returnInset
+      && event.clientY < window.innerHeight - returnInset;
+    if (returnedInside) cancelReturnedExternalDrag();
+    return;
+  }
+  if (!state.draggedItem) return;
   const edge = 3;
   const atWindowEdge = event.clientX <= edge
     || event.clientY <= edge
@@ -2414,12 +2459,23 @@ window.addEventListener('dragleave', (event) => {
 }, true);
 
 dom.galleryScroll.addEventListener('dragenter', (event) => {
+  if (state.externalDragStarted) {
+    cancelReturnedExternalDrag();
+    event.preventDefault();
+    return;
+  }
   if (!isExternalFileDrag(event) || state.moveInProgress || !state.currentDirectory) return;
   event.preventDefault();
   dom.galleryScroll.classList.add('external-drop-target');
 });
 
 dom.galleryScroll.addEventListener('dragover', (event) => {
+  if (state.externalDragStarted) {
+    cancelReturnedExternalDrag();
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'none';
+    return;
+  }
   if (!isExternalFileDrag(event) || state.moveInProgress || !state.currentDirectory) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = 'move';
@@ -2465,6 +2521,12 @@ window.addEventListener('dragover', (event) => {
 }, true);
 
 window.addEventListener('drop', (event) => {
+  if (state.externalDragStarted) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    cancelReturnedExternalDrag();
+    return;
+  }
   if (!isExternalFileDrag(event)) return;
   event.preventDefault();
   clearExternalDropTargets();

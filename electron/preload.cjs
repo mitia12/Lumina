@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('lumina', {
   readTextFile: (itemPath) => ipcRenderer.invoke('text:read', itemPath),
   writeTextFile: (itemPath, content) => ipcRenderer.invoke('text:write', itemPath, content),
   startExternalDrag: (itemPaths) => ipcRenderer.send('item:start-external-drag', itemPaths),
+  cancelExternalDrag: () => ipcRenderer.send('item:cancel-external-drag'),
   onExternalDragEnded: (callback) => {
     const listener = (_event, result) => callback(result);
     ipcRenderer.on('item:external-drag-ended', listener);

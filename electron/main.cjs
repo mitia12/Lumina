@@ -7,7 +7,7 @@ const path = require('node:path');
 const bundledFfmpegPath = require('ffmpeg-static');
 
 const IMAGE_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif', '.svg', '.ico', '.tif', '.tiff'
+  '.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp', '.bmp', '.avif', '.svg', '.ico', '.tif', '.tiff'
 ]);
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.webm', '.mov', '.m4v', '.avi', '.mkv', '.wmv', '.mpeg', '.mpg', '.ogv', '.3gp'
@@ -19,7 +19,7 @@ const TEXT_EXTENSIONS = new Set(['.txt', '.md']);
 const MAX_TEXT_FILE_SIZE = 10 * 1024 * 1024;
 
 const MEDIA_TYPES = {
-  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.jfif': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
   '.webp': 'image/webp', '.bmp': 'image/bmp', '.avif': 'image/avif', '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon', '.tif': 'image/tiff', '.tiff': 'image/tiff', '.mp4': 'video/mp4',
   '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/x-m4v',
@@ -45,6 +45,7 @@ let activePreviewJobs = 0;
 let previewCacheDirectory = null;
 let thumbnailCacheDirectory = null;
 let externalDragIcon = null;
+const cancelledExternalDrags = new Set();
 const PREVIEW_CACHE_LIMIT = 1.5 * 1024 * 1024 * 1024;
 const THUMBNAIL_CACHE_LIMIT = 768 * 1024 * 1024;
 
@@ -852,6 +853,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('item:start-external-drag', (event, itemPaths) => {
     const sender = event.sender;
+    cancelledExternalDrags.delete(sender.id);
     let safePaths = [];
     try {
       const requestedPaths = Array.isArray(itemPaths) ? itemPaths : [itemPaths];
@@ -864,13 +866,17 @@ app.whenReady().then(async () => {
       sender.startDrag({ ...dragFiles, icon: externalDragIcon || nativeImage.createEmpty() });
       const dragDurationMs = Date.now() - startedAt;
       void (async () => {
+        // startDrag blocks this IPC handler. Let a drop back into Lumina
+        // enqueue its cancellation before deciding whether to remove sources.
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const cancelled = cancelledExternalDrags.delete(sender.id);
         const items = [];
         for (const safePath of safePaths) {
           let sourceExists = await fs.access(safePath).then(() => true, () => false);
           let removedOriginal = false;
           let error = null;
           // An instant return means Windows did not start a real native drag.
-          if (sourceExists && dragDurationMs >= 120) {
+          if (!cancelled && sourceExists && dragDurationMs >= 120) {
             try {
               await shell.trashItem(safePath);
               sourceExists = false;
@@ -883,7 +889,7 @@ app.whenReady().then(async () => {
         }
 
         if (!sender.isDestroyed()) {
-          sender.send('item:external-drag-ended', { items, dragDurationMs });
+          sender.send('item:external-drag-ended', { items, dragDurationMs, cancelled });
         }
       })().catch((error) => {
         if (!sender.isDestroyed()) {
@@ -912,6 +918,9 @@ app.whenReady().then(async () => {
         });
       }
     }
+  });
+  ipcMain.on('item:cancel-external-drag', (event) => {
+    cancelledExternalDrags.add(event.sender.id);
   });
 
   await createWindow();
