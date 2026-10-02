@@ -62,6 +62,8 @@ const dom = {
   settingsReset: document.querySelector('#settings-reset'),
   confirmDeleteToggle: document.querySelector('#confirm-delete-toggle'),
   queueAutoplayToggle: document.querySelector('#queue-autoplay-toggle'),
+  restoreSessionToggle: document.querySelector('#restore-session-toggle'),
+  previewSoundToggle: document.querySelector('#preview-sound-toggle'),
   accentColor: document.querySelector('#accent-color'),
   backgroundColor: document.querySelector('#background-color'),
   surfaceColor: document.querySelector('#surface-color'),
@@ -119,6 +121,12 @@ const state = {
   pendingDelete: null,
   confirmBeforeDelete: storedConfirmDelete === null ? true : storedConfirmDelete === 'true',
   queueAutoplay: storedQueueAutoplay === 'true',
+  restoreSession: false,
+  sessionReady: false,
+  previewSoundEnabled: localStorage.getItem('lumina:preview-sound') === 'true',
+  previewMuted: localStorage.getItem('lumina:preview-sound') !== 'true',
+  previewVolume: 1,
+  lastPreviewMediaPath: null,
   deletingPaths: new Set(),
   preparedPaths: new Set(),
   warmedPaths: new Set(),
@@ -506,9 +514,22 @@ async function openFolder() {
   }
 }
 
+function persistSession() {
+  if (!state.sessionReady) return;
+  window.lumina.saveSession({
+    restoreEnabled: state.restoreSession,
+    currentDirectory: state.currentDirectory,
+    expandedPaths: [...expandedTreePaths()],
+    recursive: state.recursive
+  });
+}
+
 function expandedTreePaths() {
   return new Set([...dom.tree.querySelectorAll('.tree-node')]
-    .filter((node) => !node.querySelector(':scope > .tree-children')?.classList.contains('hidden'))
+    .filter((node) => {
+      const children = node.querySelector(':scope > .tree-children');
+      return children && !children.classList.contains('hidden');
+    })
     .map((node) => normalizeComparablePath(node.dataset.path)));
 }
 
@@ -527,12 +548,12 @@ async function restoreExpandedTreeNodes(container, paths) {
   }
 }
 
-async function renderTree() {
+async function renderTree(restoredPaths = null) {
   if (!state.roots.length) return;
   const hadTree = Boolean(dom.tree.querySelector('.tree-node'));
-  const pathsToRestore = hadTree
+  const pathsToRestore = restoredPaths ?? (hadTree
     ? expandedTreePaths()
-    : new Set(state.roots.map((root) => normalizeComparablePath(root.path)));
+    : new Set(state.roots.map((root) => normalizeComparablePath(root.path))));
   dom.tree.replaceChildren();
   const fragment = document.createDocumentFragment();
   const favorites = createFavoritesSection();
@@ -949,6 +970,7 @@ async function selectDirectory(directoryPath) {
     return;
   }
   state.currentDirectory = directoryPath;
+  persistSession();
   dom.galleryScroll.scrollTop = 0;
   state.selected = null;
   state.selectedPaths = new Set();
@@ -1389,7 +1411,7 @@ function createMediaCard(item) {
   card.addEventListener('click', (event) => selectMediaWithModifiers(item, event));
   card.addEventListener('contextmenu', (event) => showFileContextMenu(event, item));
   card.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
+    if (event.key === 'Enter') {
       event.preventDefault();
       selectMedia(item);
     }
@@ -1486,6 +1508,62 @@ function renderEmptyPreview() {
   updateSelectionClasses();
 }
 
+function syncPreviewSound() {
+  for (const media of dom.preview.querySelectorAll('video, audio')) {
+    if (media.muted !== state.previewMuted) media.muted = state.previewMuted;
+    if (media.volume !== state.previewVolume) media.volume = state.previewVolume;
+  }
+}
+
+function configurePreviewMedia(media, item) {
+  media.dataset.path = item.path;
+  media.muted = state.previewMuted;
+  media.volume = state.previewVolume;
+  const remember = () => { state.lastPreviewMediaPath = item.path; };
+  media.addEventListener('pointerdown', remember);
+  media.addEventListener('focus', remember);
+  media.addEventListener('play', remember);
+  media.addEventListener('volumechange', () => {
+    if (!media.isConnected) return;
+    if (media.muted === state.previewMuted && media.volume === state.previewVolume) return;
+    state.previewMuted = media.muted;
+    state.previewVolume = media.volume;
+    syncPreviewSound();
+  });
+}
+
+function previewPlaybackTarget() {
+  const fullscreen = document.fullscreenElement;
+  if (fullscreen) {
+    const media = fullscreen.matches('video, audio') ? fullscreen : fullscreen.querySelector('video, audio');
+    if (media) return media;
+  }
+  const media = [...dom.preview.querySelectorAll('video, audio')];
+  return media.find((entry) => entry.dataset.path === state.lastPreviewMediaPath) || media[0] || null;
+}
+
+function togglePreviewPlayback(media) {
+  state.lastPreviewMediaPath = media.dataset.path;
+  if (media.paused || media.ended) {
+    if (media.ended) media.currentTime = 0;
+    media.play().catch(() => showToast('Не удалось воспроизвести этот файл', 'error'));
+  } else {
+    media.pause();
+  }
+}
+
+function previewShortcutAvailable() {
+  const active = document.activeElement;
+  const isEditing = active?.matches('input, textarea, select') || active?.isContentEditable;
+  const modalOpen = [dom.deleteModal, dom.nameModal, dom.settingsModal]
+    .some((modal) => !modal.classList.contains('hidden'));
+  return !isEditing && !modalOpen && Boolean(previewPlaybackTarget());
+}
+
+function updatePreviewShortcut() {
+  window.lumina.setPreviewShortcutEnabled(previewShortcutAvailable());
+}
+
 function createHistoryPreviewItem(item, index, options = {}) {
   const entry = document.createElement('article');
   entry.className = `preview-history-item${index === 0 ? ' current' : ''}`;
@@ -1502,6 +1580,7 @@ function createHistoryPreviewItem(item, index, options = {}) {
     stage.append(image);
   } else if (item.kind === 'video') {
     const video = document.createElement('video');
+    configurePreviewMedia(video, item);
     video.src = item.url;
     video.poster = item.thumbnailUrl || '';
     video.controls = true;
@@ -1524,6 +1603,7 @@ function createHistoryPreviewItem(item, index, options = {}) {
       artwork.append(cover);
     }
     const audio = document.createElement('audio');
+    configurePreviewMedia(audio, item);
     audio.src = item.url;
     audio.controls = true;
     audio.preload = index === 0 ? 'metadata' : 'none';
@@ -1602,6 +1682,7 @@ async function renderPreview(item, options = {}) {
     mediaElement.alt = item.name;
   } else if (item.kind === 'video') {
     mediaElement = document.createElement('video');
+    configurePreviewMedia(mediaElement, item);
     mediaElement.src = item.url;
     mediaElement.controls = true;
     mediaElement.loop = state.loopVideoPaths.has(item.path);
@@ -1622,6 +1703,7 @@ async function renderPreview(item, options = {}) {
       artwork.prepend(cover);
     }
     mediaElement = document.createElement('audio');
+    configurePreviewMedia(mediaElement, item);
     mediaElement.src = item.url;
     mediaElement.controls = true;
     mediaElement.preload = 'metadata';
@@ -1994,6 +2076,7 @@ async function applyRootsAfterRemoval(nextRoots, removedPath, removeFavorites) {
     state.root = rootForPath(state.currentDirectory) || state.roots[0];
   }
   updateRootTitle();
+  persistSession();
   if (!state.roots.length) {
     dom.tree.innerHTML = `<div class="panel-placeholder compact"><div class="placeholder-icon">${ICONS.folder}</div><p>Добавьте одну или несколько папок, чтобы увидеть их структуру</p></div>`;
     setGalleryView('welcome');
@@ -2156,6 +2239,7 @@ dom.openFolder.addEventListener('click', openFolder);
 dom.emptyOpen.addEventListener('click', openFolder);
 dom.recursive.addEventListener('change', async () => {
   state.recursive = dom.recursive.checked;
+  persistSession();
   await loadMedia();
 });
 dom.playAll.addEventListener('click', () => setAutoplay(!state.autoplay));
@@ -2176,6 +2260,17 @@ dom.confirmDeleteToggle.addEventListener('change', () => {
 dom.queueAutoplayToggle.addEventListener('change', () => {
   state.queueAutoplay = dom.queueAutoplayToggle.checked;
   localStorage.setItem('lumina:queue-autoplay', String(state.queueAutoplay));
+});
+dom.restoreSessionToggle.addEventListener('change', () => {
+  state.restoreSession = dom.restoreSessionToggle.checked;
+  persistSession();
+});
+dom.previewSoundToggle.addEventListener('change', () => {
+  state.previewSoundEnabled = dom.previewSoundToggle.checked;
+  localStorage.setItem('lumina:preview-sound', String(state.previewSoundEnabled));
+  state.previewMuted = !state.previewSoundEnabled;
+  if (state.previewSoundEnabled && state.previewVolume === 0) state.previewVolume = 1;
+  syncPreviewSound();
 });
 dom.previewHistoryToggle.addEventListener('change', () => {
   state.previewHistoryEnabled = dom.previewHistoryToggle.checked;
@@ -2290,25 +2385,42 @@ bindResizer(dom.rightResizer, 'right');
 dom.confirmDeleteToggle.checked = state.confirmBeforeDelete;
 dom.queueAutoplayToggle.checked = state.queueAutoplay;
 dom.previewHistoryToggle.checked = state.previewHistoryEnabled;
+dom.previewSoundToggle.checked = state.previewSoundEnabled;
 syncMediaFilters();
 initCustomScrollbars();
 
 async function loadInitialRoots() {
   try {
+    const session = await window.lumina.getSession();
+    state.restoreSession = session.restoreEnabled;
+    dom.restoreSessionToggle.checked = state.restoreSession;
     const roots = await window.lumina.getRoots();
     if (!roots?.length || state.roots.length) return;
     state.roots = roots;
-    state.root = roots[0];
-    state.currentDirectory = roots[0].path;
+    state.currentDirectory = session.currentDirectory || roots[0].path;
+    state.root = rootForPath(state.currentDirectory) || roots[0];
+    state.recursive = Boolean(session.recursive);
+    dom.recursive.checked = state.recursive;
     updateRootTitle();
-    await renderTree();
+    await renderTree(session.expandedPaths ? new Set(session.expandedPaths.map(normalizeComparablePath)) : null);
     await loadMedia({ prepareRoots: true });
   } catch (error) {
     showToast(`Не удалось открыть начальные папки: ${formatError(error)}`, 'error');
+  } finally {
+    state.sessionReady = true;
+    persistSession();
   }
 }
 
 void loadInitialRoots();
+
+let sessionSaveTimer;
+const sessionTreeObserver = new MutationObserver(() => {
+  clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = setTimeout(persistSession, 150);
+});
+sessionTreeObserver.observe(dom.tree, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+window.addEventListener('beforeunload', persistSession);
 
 let galleryScrollFrame;
 dom.galleryScroll.addEventListener('scroll', () => {
@@ -2324,9 +2436,25 @@ const galleryResizeObserver = new ResizeObserver(() => {
 });
 galleryResizeObserver.observe(document.querySelector('#gallery-panel'));
 
+// Native media controls live in Chromium's shadow DOM. Route Space through
+// Electron so their focused buttons never receive the playback shortcut.
+window.lumina.onPreviewPlaybackToggle(() => {
+  if (!previewShortcutAvailable()) return;
+  togglePreviewPlayback(previewPlaybackTarget());
+});
+document.addEventListener('focusin', updatePreviewShortcut);
+document.addEventListener('focusout', () => queueMicrotask(updatePreviewShortcut));
+document.addEventListener('fullscreenchange', updatePreviewShortcut);
+const previewShortcutObserver = new MutationObserver(updatePreviewShortcut);
+previewShortcutObserver.observe(dom.preview, { childList: true, subtree: true });
+for (const modal of [dom.deleteModal, dom.nameModal, dom.settingsModal]) {
+  previewShortcutObserver.observe(modal, { attributes: true, attributeFilter: ['class'] });
+}
+updatePreviewShortcut();
+
 window.addEventListener('keydown', (event) => {
   const tag = event.target.tagName;
-  const isEditing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'AUDIO' || tag === 'VIDEO';
+  const isEditing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target.isContentEditable;
   if (event.key === 'Escape' && !dom.contextMenu.classList.contains('hidden')) {
     hideFileContextMenu();
     return;
@@ -2344,15 +2472,13 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (isEditing || !dom.deleteModal.classList.contains('hidden') || !dom.nameModal.classList.contains('hidden') || !dom.settingsModal.classList.contains('hidden')) return;
+  if (tag === 'AUDIO' || tag === 'VIDEO') return;
   if (event.ctrlKey && event.key.toLowerCase() === 'o') {
     event.preventDefault();
     openFolder();
   } else if (event.key === 'Delete' && state.selected) {
     event.preventDefault();
     requestDelete(state.selected);
-  } else if (event.key === ' ' && state.media.some(isAutoplayMedia)) {
-    event.preventDefault();
-    setAutoplay(!state.autoplay);
   } else if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && state.media.length) {
     const currentIndex = state.media.findIndex((item) => item.path === state.selected?.path);
     const direction = event.key === 'ArrowRight' ? 1 : -1;
@@ -2360,7 +2486,7 @@ window.addEventListener('keydown', (event) => {
     selectMedia(state.media[nextIndex]);
     scrollToMediaIndex(nextIndex);
   }
-});
+}, true);
 
 let filesystemRefreshTimer;
 window.lumina.onFilesystemChanged(() => {

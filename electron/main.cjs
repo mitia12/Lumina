@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, shell, nativeImage } = require('electron');
 const { promises: fs, watch, createReadStream, constants: fsConstants } = require('node:fs');
+const { writeFileSync, renameSync } = require('node:fs');
 const { Readable } = require('node:stream');
 const { spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
@@ -31,7 +32,11 @@ const MEDIA_TYPES = {
 };
 
 let mainWindow;
+let previewShortcutEnabled = false;
 let currentRoots = [];
+let sessionFilePath;
+let lastSessionText = '';
+let savedSession = { restoreEnabled: false };
 const rootWatchers = new Map();
 let watchTimer = null;
 const thumbnailCache = new Map();
@@ -511,6 +516,56 @@ function serializeRoots() {
   }));
 }
 
+function persistSession(snapshot = savedSession) {
+  if (!sessionFilePath || !snapshot || typeof snapshot !== 'object') return;
+  savedSession = {
+    restoreEnabled: snapshot.restoreEnabled === true,
+    roots: [...currentRoots],
+    currentDirectory: isWithinRoot(snapshot.currentDirectory) ? path.resolve(snapshot.currentDirectory) : null,
+    expandedPaths: Array.isArray(snapshot.expandedPaths)
+      ? [...new Set(snapshot.expandedPaths.filter((entry) => isWithinRoot(entry)).map((entry) => path.resolve(entry)))]
+      : [],
+    recursive: snapshot.recursive === true
+  };
+  const text = JSON.stringify(savedSession);
+  if (text === lastSessionText) return;
+  try {
+    writeFileSync(`${sessionFilePath}.tmp`, text, 'utf8');
+    renameSync(`${sessionFilePath}.tmp`, sessionFilePath);
+    lastSessionText = text;
+  } catch (error) {
+    console.error('Не удалось сохранить сессию:', error.message);
+  }
+}
+
+async function restoreSession() {
+  sessionFilePath = path.join(app.getPath('userData'), 'last-session.json');
+  try {
+    const stored = JSON.parse(await fs.readFile(sessionFilePath, 'utf8'));
+    savedSession.restoreEnabled = stored?.restoreEnabled === true;
+    if (!savedSession.restoreEnabled) return;
+    for (const entry of Array.isArray(stored.roots) ? stored.roots : []) {
+      if (typeof entry !== 'string' || !path.isAbsolute(entry)) continue;
+      const rootPath = path.resolve(entry);
+      const exists = await fs.stat(rootPath).then((stat) => stat.isDirectory(), () => false);
+      if (exists && !currentRoots.some((root) => pathsEqual(root, rootPath))) currentRoots.push(rootPath);
+    }
+    savedSession = {
+      restoreEnabled: true,
+      currentDirectory: null,
+      expandedPaths: Array.isArray(stored.expandedPaths) ? stored.expandedPaths.filter(isWithinRoot) : [],
+      recursive: stored.recursive === true
+    };
+    if (isWithinRoot(stored.currentDirectory)) {
+      const exists = await fs.stat(stored.currentDirectory).then((stat) => stat.isDirectory(), () => false);
+      if (exists) savedSession.currentDirectory = path.resolve(stored.currentDirectory);
+    }
+    syncRootWatchers();
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.error('Не удалось восстановить сессию:', error.message);
+  }
+}
+
 async function prepareMediaItems(sender, items, requestId) {
   const uniqueItems = [...new Map((Array.isArray(items) ? items : []).map((item) => [item.path, item])).values()];
   const total = uniqueItems.length;
@@ -553,6 +608,7 @@ async function createWindow() {
     minHeight: 640,
     backgroundColor: '#0b0d12',
     title: 'Lumina Gallery',
+    icon: path.join(__dirname, '..', 'src', 'assets', 'icon.ico'),
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
@@ -562,6 +618,18 @@ async function createWindow() {
       sandbox: true
     }
   });
+
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (!previewShortcutEnabled || (input.code !== 'Space' && input.key !== ' ')
+      || input.control || input.alt || input.meta || input.isComposing) return;
+    // Consume both press and release before Chromium activates a focused
+    // native media-control button (including the fullscreen button).
+    event.preventDefault();
+    if (input.type === 'keyDown' && !input.isAutoRepeat) {
+      mainWindow.webContents.send('preview:toggle-playback');
+    }
+  });
+  mainWindow.webContents.on('did-start-loading', () => { previewShortcutEnabled = false; });
 
   // Подписываемся до загрузки: на быстрых системах ready-to-show может
   // сработать раньше, чем завершится await loadFile, оставив окно скрытым.
@@ -582,6 +650,7 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  await restoreSession();
   previewCacheDirectory = path.join(app.getPath('userData'), 'video-previews');
   thumbnailCacheDirectory = path.join(app.getPath('userData'), 'thumbnail-cache');
   await Promise.all([
@@ -601,6 +670,9 @@ app.whenReady().then(async () => {
       .filter(Boolean)
       .map((rootPath) => path.resolve(rootPath));
     syncRootWatchers();
+    savedSession.currentDirectory = null;
+    delete savedSession.expandedPaths;
+    savedSession.recursive = false;
   }
   protocol.handle('lumina-media', (request) => {
     const requestUrl = new URL(request.url);
@@ -611,6 +683,11 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('folder:choose', chooseRoot);
   ipcMain.handle('root:list', () => serializeRoots());
+  ipcMain.handle('session:get', () => savedSession);
+  ipcMain.on('session:save', (_event, snapshot) => persistSession(snapshot));
+  ipcMain.on('preview:shortcut-state', (event, enabled) => {
+    if (event.sender === mainWindow?.webContents) previewShortcutEnabled = enabled === true;
+  });
   ipcMain.handle('root:detach', async (_event, rootPath) => {
     if (typeof rootPath !== 'string' || !isOpenedRoot(rootPath)) throw new Error('Папка не является открытым корнем.');
     const safeRoot = path.resolve(rootPath);
@@ -933,3 +1010,5 @@ app.on('window-all-closed', () => {
   closeRootWatchers();
   if (process.platform !== 'darwin') app.quit();
 });
+
+app.on('before-quit', () => persistSession());

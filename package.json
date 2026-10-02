@@ -1,6 +1,6 @@
 {
   "name": "lumina-gallery",
-  "version": "3.1.1",
+  "version": "3.2.1",
   "private": true,
   "description": "Быстрый локальный просмотрщик изображений, видео и аудио для Windows",
   "author": "Lumina",
@@ -8,6 +8,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
+    "test": "node tests/run-electron.cjs",
+    "build:icon": "electron scripts/generate-icon.cjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win nsis"
   },
@@ -31,10 +33,13 @@
       "node_modules/ffmpeg-static/**/*"
     ],
     "win": {
+      "icon": "src/assets/icon.ico",
       "target": "nsis",
       "artifactName": "Lumina-Gallery-Setup-${version}.${ext}"
     },
     "nsis": {
+      "installerIcon": "src/assets/icon.ico",
+      "uninstallerIcon": "src/assets/icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,

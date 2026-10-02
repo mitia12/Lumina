@@ -3,6 +3,14 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('lumina', {
   chooseFolder: () => ipcRenderer.invoke('folder:choose'),
   getRoots: () => ipcRenderer.invoke('root:list'),
+  getSession: () => ipcRenderer.invoke('session:get'),
+  saveSession: (session) => ipcRenderer.send('session:save', session),
+  setPreviewShortcutEnabled: (enabled) => ipcRenderer.send('preview:shortcut-state', enabled),
+  onPreviewPlaybackToggle: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('preview:toggle-playback', listener);
+    return () => ipcRenderer.removeListener('preview:toggle-playback', listener);
+  },
   detachRoot: (rootPath) => ipcRenderer.invoke('root:detach', rootPath),
   trashRoot: (rootPath) => ipcRenderer.invoke('root:trash', rootPath),
   getChildren: (directoryPath) => ipcRenderer.invoke('folder:children', directoryPath),
