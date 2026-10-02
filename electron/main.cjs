@@ -89,6 +89,34 @@ function thumbnailCachePath(filePath, stat) {
   return { key, filePath: path.join(thumbnailCacheDirectory, `${key}.jpg`) };
 }
 
+function createLinuxThumbnail(filePath) {
+  return new Promise((resolve, reject) => {
+    const job = spawn(resolvedFfmpegPath(), [
+      '-hide_banner', '-loglevel', 'error', '-i', filePath, '-map', '0:v:0',
+      '-frames:v', '1', '-vf', 'scale=480:360:force_original_aspect_ratio=decrease',
+      '-threads', '1', '-c:v', 'mjpeg', '-q:v', '3', '-f', 'image2pipe', 'pipe:1'
+    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const chunks = [];
+    let size = 0;
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; job.kill(); }, 30000);
+    job.stdout.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 8 * 1024 * 1024) { job.kill(); return; }
+      chunks.push(chunk);
+    });
+    job.once('error', (error) => { clearTimeout(timer); reject(error); });
+    job.once('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut || code !== 0 || !size || size > 8 * 1024 * 1024) {
+        reject(new Error('Не удалось создать миниатюру файла.'));
+      } else {
+        resolve(Buffer.concat(chunks));
+      }
+    });
+  });
+}
+
 async function ensureThumbnail(filePath, stat) {
   const cached = thumbnailCachePath(filePath, stat);
   let jpeg = thumbnailCache.get(cached.key);
@@ -102,9 +130,12 @@ async function ensureThumbnail(filePath, stat) {
     const now = new Date();
     fs.utimes(cached.filePath, now, now).catch(() => {});
   } catch {
-    const thumbnail = await runThumbnailJob(() => nativeImage.createThumbnailFromPath(filePath, { width: 480, height: 360 }));
-    if (thumbnail.isEmpty()) throw new Error('Thumbnail is empty');
-    jpeg = thumbnail.toJPEG(72);
+    jpeg = await runThumbnailJob(async () => {
+      if (process.platform === 'linux') return createLinuxThumbnail(filePath);
+      const thumbnail = await nativeImage.createThumbnailFromPath(filePath, { width: 480, height: 360 });
+      if (thumbnail.isEmpty()) throw new Error('Thumbnail is empty');
+      return thumbnail.toJPEG(72);
+    });
     await fs.writeFile(cached.filePath, jpeg);
   }
   thumbnailCache.set(cached.key, jpeg);
@@ -211,7 +242,7 @@ function isWithinRoot(targetPath) {
   return currentRoots.some((rootPath) => {
     const root = path.resolve(rootPath);
     const relative = path.relative(root, target);
-    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
   });
 }
 
@@ -235,13 +266,17 @@ function pathsEqual(left, right) {
 
 function isPathInside(candidatePath, parentPath) {
   const relative = path.relative(path.resolve(parentPath), path.resolve(candidatePath));
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 function validateEntryName(value) {
   if (typeof value !== 'string') throw new Error('Введите имя.');
   const name = value.trim();
   if (!name || name === '.' || name === '..') throw new Error('Введите корректное имя.');
+  if (process.platform !== 'win32') {
+    if (/[\/\u0000]/.test(name)) throw new Error('Имя содержит недопустимые символы.');
+    return name;
+  }
   if (/[<>:"/\\|?*\u0000-\u001f]/.test(name) || /[. ]$/.test(name)) {
     throw new Error('Имя содержит недопустимые для Windows символы.');
   }
@@ -608,7 +643,7 @@ async function createWindow() {
     minHeight: 640,
     backgroundColor: '#0b0d12',
     title: 'Lumina Gallery',
-    icon: path.join(__dirname, '..', 'src', 'assets', 'icon.ico'),
+    icon: path.join(__dirname, '..', 'src', 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
@@ -821,7 +856,7 @@ app.whenReady().then(async () => {
       let createdTarget = false;
       try {
         if (typeof sourceValue !== 'string' || !sourceValue || !path.isAbsolute(sourceValue)) {
-          throw new Error('Windows не передала корректный путь к файлу.');
+          throw new Error('Не удалось определить путь к файлу.');
         }
         sourcePath = path.resolve(sourceValue);
         const sourceStat = await fs.stat(sourcePath);
@@ -953,7 +988,7 @@ app.whenReady().then(async () => {
           let removedOriginal = false;
           let error = null;
           // An instant return means Windows did not start a real native drag.
-          if (!cancelled && sourceExists && dragDurationMs >= 120) {
+          if (process.platform === 'win32' && !cancelled && sourceExists && dragDurationMs >= 120) {
             try {
               await shell.trashItem(safePath);
               sourceExists = false;

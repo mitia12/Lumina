@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('lumina', {
+  platform: process.platform,
   chooseFolder: () => ipcRenderer.invoke('folder:choose'),
   getRoots: () => ipcRenderer.invoke('root:list'),
   getSession: () => ipcRenderer.invoke('session:get'),

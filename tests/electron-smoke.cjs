@@ -3,8 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 
-const fixture = process.argv[2];
-const phase = process.argv[3];
+const fixture = process.argv.at(-2);
+const phase = process.argv.at(-1);
 app.setPath('userData', path.join(fixture, 'user-data'));
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 require('../electron/main.cjs');
@@ -28,8 +28,8 @@ async function test() {
     if (message.startsWith('Uncaught')) errors.push(message);
   });
   const first = path.join(fixture, 'first');
-  const nested = path.join(first, 'nested');
-  const deep = path.join(nested, 'deep');
+  const nested = path.join(first, 'Nested');
+  const deep = path.join(nested, 'Deep');
   const space = async () => {
     await delay(30);
     window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
@@ -65,6 +65,26 @@ async function test() {
   };
   if (phase === 'initial') {
     assert.equal(await evaluate('state.roots.length'), 2);
+    if (process.platform === 'linux') {
+      assert.equal(await evaluate(`normalizeComparablePath(${JSON.stringify(first + '/Case.txt')}) === normalizeComparablePath(${JSON.stringify(first + '/case.txt')})`), false, 'Linux paths preserve case');
+      assert.equal(await evaluate(`parentPath('/note.txt')`), '/', 'Parent of root file');
+      assert.equal(await evaluate(`isPathWithinDirectory('/home', '/')`), true, 'Filesystem root contains children');
+      assert.equal(await evaluate(`state.media.filter(item => item.name === 'Case.txt' || item.name === 'case.txt').length`), 2, 'Different case files stay distinct');
+    }
+    const thumbnails = await evaluate(`(async () => {
+      const results = [];
+      for (const name of ['photo.png', 'one.webm', 'album.mp3']) {
+        const item = state.media.find(item => item.name === name);
+        const response = await fetch(item.thumbnailUrl);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        results.push({ name, status: response.status, jpeg: bytes[0] === 255 && bytes[1] === 216 });
+      }
+      return results;
+    })()`);
+    for (const thumbnail of thumbnails) {
+      assert.equal(thumbnail.status, 200, `Thumbnail available: ${thumbnail.name}`);
+      assert.equal(thumbnail.jpeg, true, `Valid JPEG thumbnail: ${thumbnail.name}`);
+    }
     assert.equal(await evaluate('[...expandedTreePaths()].some(item => /\.(webm|wav|txt)$/.test(item))'), false, 'Only folders are saved as expanded');
     await evaluate(`(async () => {
       dom.previewHistoryToggle.checked = true;
@@ -150,7 +170,7 @@ async function test() {
     await delay(300);
     const screenshotDirectory = path.join(__dirname, '..', 'release');
     fs.mkdirSync(screenshotDirectory, { recursive: true });
-    await window.webContents.capturePage().then((image) => fs.writeFileSync(path.join(screenshotDirectory, `settings-${app.getVersion()}.png`), image.toPNG()));
+    await window.webContents.capturePage().then((image) => fs.writeFileSync(path.join(screenshotDirectory, `settings-${require('../package.json').version}-${process.platform}.png`), image.toPNG()));
     assert.equal(await evaluate('dom.restoreSessionToggle.checked'), true);
   } else if (phase === 'restore') {
     assert.equal(await evaluate('state.roots.length'), 2, 'All roots restored');

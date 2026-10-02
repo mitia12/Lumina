@@ -416,23 +416,35 @@ function pluralFiles(count) {
 }
 
 function parentPath(filePath) {
-  const index = Math.max(filePath.lastIndexOf('\\'), filePath.lastIndexOf('/'));
-  return index > 0 ? filePath.slice(0, index) : filePath;
+  const separator = window.lumina.platform === 'win32' ? /[\\/]/ : /\//;
+  const parts = filePath.split(separator);
+  if (parts.length <= 1) return filePath;
+  parts.pop();
+  const parent = parts.join(window.lumina.platform === 'win32' ? '\\' : '/');
+  return window.lumina.platform === 'win32' && /^[a-z]:$/i.test(parent) ? `${parent}\\` : parent || '/';
+}
+
+function fileName(filePath) {
+  return filePath.split(window.lumina.platform === 'win32' ? /[\\/]/ : /\//).pop();
 }
 
 function joinPath(base, part) {
-  const separator = base.includes('\\') ? '\\' : '/';
-  return `${base.replace(/[\\/]$/, '')}${separator}${part}`;
+  const separator = window.lumina.platform === 'win32' ? '\\' : '/';
+  return `${base.endsWith(separator) ? base.slice(0, -1) : base}${separator}${part}`;
 }
 
 function normalizeComparablePath(value) {
-  return String(value || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+  const itemPath = String(value || '');
+  return window.lumina.platform === 'win32'
+    ? itemPath.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+    : itemPath.replace(/\/+$/, '') || (itemPath.startsWith('/') ? '/' : '');
 }
 
 function isPathWithinDirectory(candidatePath, directoryPath) {
   const candidate = normalizeComparablePath(candidatePath);
   const directory = normalizeComparablePath(directoryPath);
-  return candidate === directory || candidate.startsWith(`${directory}\\`);
+  const separator = window.lumina.platform === 'win32' ? '\\' : '/';
+  return candidate === directory || candidate.startsWith(directory.endsWith(separator) ? directory : `${directory}${separator}`);
 }
 
 function rootForPath(candidatePath) {
@@ -823,8 +835,8 @@ async function importExternalFilesToDirectory(sourcePaths, destinationPath) {
 
     if (result.imported.length) {
       showToast(result.imported.length === 1
-        ? `«${result.imported[0].name}» перемещён в «${destinationPath.split(/[\\/]/).pop()}»`
-        : `${result.imported.length} файлов перемещено в «${destinationPath.split(/[\\/]/).pop()}»`);
+        ? `«${result.imported[0].name}» перемещён в «${fileName(destinationPath)}»`
+        : `${result.imported.length} файлов перемещено в «${fileName(destinationPath)}»`);
     }
     if (result.errors.length) {
       const firstError = result.errors[0];
@@ -877,7 +889,7 @@ function itemWithPath(item, nextPath) {
   const kind = item.kind;
   return {
     ...item,
-    name: nextPath.split(/[\\/]/).pop(),
+    name: fileName(nextPath),
     path: nextPath,
     directory: parentPath(nextPath),
     url: kind === 'directory' ? null : `lumina-media://asset/?path=${encodeURIComponent(nextPath)}`,
@@ -949,8 +961,8 @@ async function moveItemsToDirectory(items, destinationPath) {
 
     if (moved.length) {
       showToast(moved.length === 1
-        ? `«${moved[0].item.name}» перемещён в «${destinationPath.split(/[\\/]/).pop()}»`
-        : `${moved.length} элементов перемещено в «${destinationPath.split(/[\\/]/).pop()}»`);
+        ? `«${moved[0].item.name}» перемещён в «${fileName(destinationPath)}»`
+        : `${moved.length} элементов перемещено в «${fileName(destinationPath)}»`);
     }
     if (errors.length) showToast(`Не удалось переместить ${errors.length} элементов: ${formatError(errors[0].error)}`, 'error');
   } finally {
@@ -1101,8 +1113,9 @@ function renderBreadcrumbs() {
     return;
   }
 
-  const rawRelative = state.currentDirectory.slice(state.root.path.length).replace(/^[\\/]+/, '');
-  const parts = rawRelative ? rawRelative.split(/[\\/]+/) : [];
+  const rawRelative = state.currentDirectory.slice(state.root.path.length)
+    .replace(window.lumina.platform === 'win32' ? /^[\\/]+/ : /^\/+/, '');
+  const parts = rawRelative ? rawRelative.split(window.lumina.platform === 'win32' ? /[\\/]+/ : /\/+/) : [];
   let accumulated = state.root.path;
   const crumbs = [{ name: state.root.name, path: state.root.path }];
   for (const part of parts) {
@@ -1921,7 +1934,7 @@ function openNameModal(mode, item) {
   dom.nameTitle.textContent = isRename ? 'Переименовать' : 'Создать новую папку';
   dom.nameDescription.textContent = isRename
     ? `Введите новое имя для «${item.name}».`
-    : `Папка будет создана в «${item.kind === 'directory' ? item.name : parentPath(item.path).split(/[\\/]/).pop()}».`;
+    : `Папка будет создана в «${item.kind === 'directory' ? item.name : fileName(parentPath(item.path))}».`;
   dom.nameInput.value = isRename ? item.name : 'Новая папка';
   dom.nameSubmit.textContent = isRename ? 'Переименовать' : 'Создать';
   dom.nameModal.classList.remove('hidden');
@@ -2035,13 +2048,13 @@ function requestDelete(item) {
   }
   state.pendingDelete = items;
   if (hasRoot) {
-    dom.deleteDescription.textContent = `ВНИМАНИЕ: корневая папка «${items[0].name}» и всё её содержимое будут перемещены в Корзину Windows. Это действие требует отдельного подтверждения.`;
+    dom.deleteDescription.textContent = `ВНИМАНИЕ: корневая папка «${items[0].name}» и всё её содержимое будут перемещены в Корзину. Это действие требует отдельного подтверждения.`;
   } else if (items.length > 1) {
-    dom.deleteDescription.textContent = `${items.length} выбранных файлов будут перемещены в Корзину Windows.`;
+    dom.deleteDescription.textContent = `${items.length} выбранных файлов будут перемещены в Корзину.`;
   } else {
     dom.deleteDescription.textContent = items[0].kind === 'directory'
-      ? `Папка «${items[0].name}» и всё её содержимое будут перемещены в Корзину Windows.`
-      : `«${items[0].name}» исчезнет из исходной папки, но его можно будет восстановить из Корзины Windows.`;
+      ? `Папка «${items[0].name}» и всё её содержимое будут перемещены в Корзину.`
+      : `«${items[0].name}» исчезнет из исходной папки, но его можно будет восстановить из Корзины.`;
   }
   dom.deleteModal.classList.remove('hidden');
   dom.deleteConfirm.focus();
@@ -2534,13 +2547,17 @@ window.lumina.onExternalDragEnded(async (result) => {
     await renderTree();
     if (!state.selected) renderEmptyPreview();
     showToast(removed.length === 1
-      ? 'Элемент передан Windows, исходник перемещён в Корзину'
-      : `${removed.length} элементов передано Windows, исходники перемещены в Корзину`);
+      ? 'Элемент перенесён во внешнее приложение'
+      : `${removed.length} элементов перенесено во внешнее приложение`);
   }
   if (errors.length) {
     showToast(`Не удалось полностью завершить перенос (${errors.length}): ${errors[0]}`, 'error');
   } else if (!result?.cancelled && !removed.length && results.length) {
-    showToast('Исходники оставлены: системное перетаскивание завершилось слишком быстро', 'error');
+    if (window.lumina.platform === 'win32') {
+      showToast('Исходники оставлены: системное перетаскивание завершилось слишком быстро', 'error');
+    } else {
+      showToast('Файлы переданы файловому менеджеру');
+    }
   }
 });
 

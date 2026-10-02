@@ -1,8 +1,9 @@
 {
   "name": "lumina-gallery",
-  "version": "3.2.1",
+  "desktopName": "lumina-gallery.desktop",
+  "version": "3.2.2",
   "private": true,
-  "description": "Быстрый локальный просмотрщик изображений, видео и аудио для Windows",
+  "description": "Локальный просмотрщик изображений, видео и аудио для Windows и Linux",
   "author": "Lumina",
   "main": "electron/main.cjs",
   "scripts": {
@@ -11,7 +12,8 @@
     "test": "node tests/run-electron.cjs",
     "build:icon": "electron scripts/generate-icon.cjs",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win nsis"
+    "dist": "electron-builder --win nsis",
+    "dist:linux": "electron-builder --linux AppImage deb --x64"
   },
   "devDependencies": {
     "electron": "^37.2.0",
@@ -36,6 +38,15 @@
       "icon": "src/assets/icon.ico",
       "target": "nsis",
       "artifactName": "Lumina-Gallery-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "src/assets/icon.png",
+      "category": "Graphics",
+      "executableName": "lumina-gallery",
+      "syncDesktopName": true,
+      "maintainer": "Lumina",
+      "artifactName": "Lumina-Gallery-${version}-linux-${arch}.${ext}"
     },
     "nsis": {
       "installerIcon": "src/assets/icon.ico",
