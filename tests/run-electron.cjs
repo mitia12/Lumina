@@ -31,7 +31,8 @@ try {
   run(require('ffmpeg-static'), ['-loglevel', 'error', '-i', path.join(roots[0], 'sound.wav'),
     '-i', path.join(roots[0], 'photo.png'), '-map', '0:a', '-map', '1:v', '-c:a', 'libmp3lame',
     '-c:v', 'mjpeg', '-disposition:v', 'attached_pic', '-id3v2_version', '3', '-y', path.join(roots[0], 'album.mp3')]);
-  for (const phase of ['initial', 'restore', 'disabled', 'missing', 'corrupt']) {
+  const phases = process.env.LUMINA_TEST_PHASE ? process.env.LUMINA_TEST_PHASE.split(',') : ['initial', 'restore', 'disabled', 'missing', 'corrupt', 'board', 'board-interactions', 'board-navigation', 'panels', 'panels-restore'];
+  for (const phase of phases) {
     const sessionFile = path.join(fixture, 'user-data', 'last-session.json');
     if (phase === 'missing') {
       fs.writeFileSync(sessionFile, JSON.stringify({ restoreEnabled: true, roots: [...roots, path.join(fixture, 'gone')],
@@ -41,7 +42,7 @@ try {
     }
     run(require('electron'), [...(process.platform === 'linux' && process.getuid?.() === 0 ? ['--no-sandbox'] : []),
       path.join(__dirname, 'electron-smoke.cjs'), fixture, phase],
-      phase === 'initial' ? { ...environment, LUMINA_TEST_ROOT: roots.join(path.delimiter) } : environment);
+      ['initial', 'board', 'board-interactions', 'board-navigation', 'panels', 'panels-restore'].includes(phase) ? { ...environment, LUMINA_TEST_ROOT: roots.join(path.delimiter) } : environment);
   }
   console.log('All Electron regression checks passed.');
 } finally {

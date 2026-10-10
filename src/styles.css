@@ -59,6 +59,72 @@ svg {
   display: none !important;
 }
 
+.preview-panel.board-mode > .preview-heading,
+.preview-panel.board-mode > .preview-content { display: none; }
+.whiteboard { position: relative; display: flex; flex-direction: column; min-height: 0; height: 100%; overflow: hidden; }
+.board-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 16px 12px; }
+.board-heading h2 { margin: 4px 0 0; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-heading > div { min-width: 0; }
+.board-toolbar { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 12px 10px; border-bottom: 1px solid var(--line); }
+.board-toolbar button { border: 1px solid var(--line-strong); background: var(--surface-raised); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 11px; cursor: pointer; }
+.board-toolbar button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
+.board-toolbar button:hover { border-color: var(--accent); }
+.board-toolbar button:disabled { opacity: .4; cursor: default; }
+.board-toolbar label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted-bright); }
+.board-color { width: 28px; height: 25px; padding: 0; border: 0; background: transparent; }
+.board-line-width { width: 40px; padding: 3px; color: var(--text); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 4px; }
+.board-toolbar output { align-self: center; font-size: 11px; width: 36px; text-align: center; }
+.board-status { padding: 7px 12px; min-height: 29px; color: var(--muted-bright); font-size: 11px; overflow-wrap: anywhere; }
+.board-scroll { position: relative; flex: 1; overflow: clip; min-height: 80px; outline: none; background-color: var(--gallery); background-image: radial-gradient(var(--line-strong) 1px, transparent 1px); touch-action: none; scrollbar-width: none; }
+.board-scroll::-webkit-scrollbar, .board-file-body::-webkit-scrollbar, .board-note textarea::-webkit-scrollbar { display: none; }
+.board-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.board-scroll.board-drop-target { outline: 2px solid var(--accent); outline-offset: -2px; }
+.board-space { position: relative; width: 100%; height: 100%; }
+.board-surface { position: absolute; top: 0; left: 0; transform-origin: top left; touch-action: none; user-select: none; }
+.board-scroll.board-panning, .board-scroll.board-panning * { cursor: grabbing !important; }
+.board-surface[data-tool="brush"], .board-surface[data-tool="rectangle"], .board-surface[data-tool="square"], .board-surface[data-tool="circle"] { cursor: crosshair; }
+.board-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.board-line { pointer-events: stroke; cursor: pointer; }
+.board-line.selected { filter: drop-shadow(0 0 4px var(--accent)); }
+.board-items { position: absolute; inset: 0; pointer-events: none; }
+.board-node { position: absolute; display: flex; flex-direction: column; pointer-events: auto; border-radius: 8px; cursor: grab; }
+.board-node.selected { outline: 2px solid var(--accent); outline-offset: 3px; }
+.board-node > svg { width: 100%; height: 100%; }
+.board-node-handle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 8px 10px; flex-shrink: 0; font-size: 12px; border-bottom: 1px solid var(--line); }
+.board-note .board-node-handle { padding-right: 38px; }
+.board-note-color { position: absolute; top: 7px; right: 8px; width: 18px; height: 18px; padding: 0; background: rgba(255,255,255,.35); border: 2px solid currentColor; border-radius: 50%; color: inherit; cursor: pointer; }
+.board-note-swatch { flex-shrink: 0; width: 18px; height: 18px; border: 1px solid var(--line-strong); border-radius: 50%; }
+.board-custom-color { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; color: var(--muted-bright); font-size: 12px; cursor: pointer; }
+.board-custom-color input { width: 32px; height: 26px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.board-note { background: #fff0ae; color: #342c16; border: 1px solid #d4bf72; }
+.board-note textarea { flex: 1; min-height: 0; width: 100%; padding: 10px; resize: none; background: transparent; color: inherit; border: none; outline: none; font-family: inherit; font-size: 14px; line-height: 1.5; user-select: text; scrollbar-width: none; }
+.board-file { border: 1px solid var(--line-strong); background: var(--surface-raised); }
+.board-file-body { position: relative; flex: 1; width: 100%; height: 100%; min-height: 0; overflow: hidden; padding: 0; font-size: 12px; overflow-wrap: anywhere; border-radius: inherit; }
+.board-file-body img, .board-file-body video { display: block; width: 100%; height: 100%; object-fit: contain; }
+.board-file-body audio { display: block; width: 100%; height: 100%; }
+.board-file-body pre { height: 100%; margin: 0; padding: 10px; overflow: hidden; white-space: pre-wrap; color: var(--muted-bright); font-size: 11px; }
+.board-file-body > svg { width: 100%; height: 100%; padding: 35px; color: var(--accent); }
+.board-audio-body audio { display: none; }
+.board-player-controls { position: absolute; bottom: 0; left: 0; right: 0; display: flex; align-items: center; gap: 5px; padding: 5px; background: rgba(0,0,0,.75); }
+.board-player-controls button { flex: 0 0 26px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: white; cursor: pointer; font-size: 14px; }
+.board-player-controls button:hover, .board-player-controls button:focus-visible { background: rgba(255,255,255,.15); }
+.board-media-seek { flex: 1; min-width: 0; width: 0; accent-color: var(--accent); cursor: pointer; }
+.board-media-error::after { content: 'Не удалось загрузить файл'; display: block; color: var(--danger); }
+.board-context-menu { max-height: calc(100vh - 16px); overflow-y: auto; }
+.board-context-menu button { min-height: 34px; }
+.board-leave-modal { position: absolute; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px; background: rgba(0,0,0,.65); }
+.board-leave-content { width: 100%; max-width: 430px; padding: 20px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface-raised); }
+.board-leave-content h3 { margin-top: 0; }
+.board-leave-content p { color: var(--muted-bright); }
+.board-leave-content button { margin: 4px 4px 4px 0; }
+.board-node-resize { position: absolute; width: calc(18px / var(--board-zoom, 1)); height: calc(18px / var(--board-zoom, 1)); background: transparent; border: 0; }
+.board-node-resize[data-corner="nw"] { top: calc(-6px / var(--board-zoom, 1)); left: calc(-6px / var(--board-zoom, 1)); cursor: nwse-resize; }
+.board-node-resize[data-corner="ne"] { top: calc(-6px / var(--board-zoom, 1)); right: calc(-6px / var(--board-zoom, 1)); cursor: nesw-resize; }
+.board-node-resize[data-corner="sw"] { bottom: calc(-6px / var(--board-zoom, 1)); left: calc(-6px / var(--board-zoom, 1)); cursor: nesw-resize; }
+.board-node-resize[data-corner="se"] { bottom: calc(-6px / var(--board-zoom, 1)); right: calc(-6px / var(--board-zoom, 1)); cursor: nwse-resize; }
+.board-help { padding: 8px 12px; color: var(--muted); font-size: 10px; line-height: 1.5; border-top: 1px solid var(--line); }
+.media-card.board-file-card .file-art { color: var(--accent); }
+
 .app-shell {
   position: relative;
   display: grid;
@@ -269,7 +335,9 @@ svg {
 
 .gallery-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   background: var(--gallery);
 }
 
@@ -677,7 +745,14 @@ body.scrollbar-dragging {
 }
 
 .location-block {
-  min-width: 120px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.gallery-toolbar .toolbar-controls {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .breadcrumbs {
@@ -716,6 +791,7 @@ body.scrollbar-dragging {
 .media-summary {
   min-height: 16px;
   margin-top: 4px;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 11px;
 }
@@ -723,6 +799,7 @@ body.scrollbar-dragging {
 .media-type-filters {
   display: flex;
   width: 100%;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
 }
@@ -844,6 +921,7 @@ body.scrollbar-dragging {
 
 .gallery-scroll {
   position: relative;
+  min-width: 0;
   padding: 20px;
 }
 

@@ -5,6 +5,7 @@ const ICONS = {
   video: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m10 9 5 3-5 3V9Z"/></svg>',
   audio: '<svg viewBox="0 0 24 24"><path d="M9 17.5V6l10-2v11.5M9 9l10-2"/><circle cx="6" cy="17.5" r="3"/><circle cx="16" cy="15.5" r="3"/></svg>',
   text: '<svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4V20.5H6Z"/><path d="M14 3.5v4h4M9 11h6M9 14h6M9 17h4"/></svg>',
+  board: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21l4-3 4 3M7 8h4v5H7ZM15 9l3 4"/></svg>',
   file: '<svg viewBox="0 0 24 24"><path d="M12 2.8 14 4l2.4-.3.9 2.2 2.1 1.2-.5 2.4 1.4 2-1.4 2 .5 2.4-2.1 1.2-.9 2.2-2.4-.3-2 1.2-2-1.2-2.4.3-.9-2.2-2.1-1.2.5-2.4-1.4-2 1.4-2-.5-2.4 2.1-1.2.9-2.2L10 4l2-1.2Z"/><circle cx="12" cy="12" r="3"/></svg>',
   open: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>',
@@ -64,6 +65,7 @@ const dom = {
   queueAutoplayToggle: document.querySelector('#queue-autoplay-toggle'),
   restoreSessionToggle: document.querySelector('#restore-session-toggle'),
   previewSoundToggle: document.querySelector('#preview-sound-toggle'),
+  boardAutosaveToggle: document.querySelector('#board-autosave-toggle'),
   accentColor: document.querySelector('#accent-color'),
   backgroundColor: document.querySelector('#background-color'),
   surfaceColor: document.querySelector('#surface-color'),
@@ -75,6 +77,9 @@ const dom = {
   contextLoopVideo: document.querySelector('#context-loop-video'),
   contextRename: document.querySelector('#context-rename'),
   contextCreateFolder: document.querySelector('#context-create-folder'),
+  contextCreateBoard: document.querySelector('#context-create-board'),
+  contextCopy: document.querySelector('#context-copy'),
+  contextPaste: document.querySelector('#context-paste'),
   contextDetachRoot: document.querySelector('#context-detach-root'),
   contextDelete: document.querySelector('#context-delete'),
   nameModal: document.querySelector('#name-modal'),
@@ -112,6 +117,7 @@ const state = {
   requestId: 0,
   contextItem: null,
   nameAction: null,
+  hasCopiedItems: false,
   draggedItem: null,
   draggedItems: [],
   externalDraggedItems: [],
@@ -124,6 +130,7 @@ const state = {
   restoreSession: false,
   sessionReady: false,
   previewSoundEnabled: localStorage.getItem('lumina:preview-sound') === 'true',
+  boardAutosave: localStorage.getItem('lumina:board-autosave') === 'true',
   previewMuted: localStorage.getItem('lumina:preview-sound') !== 'true',
   previewVolume: 1,
   lastPreviewMediaPath: null,
@@ -135,7 +142,7 @@ const state = {
   virtual: { columns: 1, cardWidth: 230, rowHeight: 240, start: -1, end: -1 },
   tileSize: Math.min(420, Math.max(140, storedTileSize)),
   leftWidth: Math.min(520, Math.max(180, Number(localStorage.getItem('lumina:left-width')) || 280)),
-  rightWidth: Math.min(600, Math.max(260, Number(localStorage.getItem('lumina:right-width')) || 360))
+  rightWidth: Math.max(260, Number(localStorage.getItem('lumina:right-width')) || 360)
 };
 
 function getStoredMediaFilters() {
@@ -258,6 +265,8 @@ function applyTheme(theme, persist = true) {
 document.documentElement.style.setProperty('--tile-size', `${state.tileSize}px`);
 document.documentElement.style.setProperty('--left-width', `${state.leftWidth}px`);
 document.documentElement.style.setProperty('--right-width', `${state.rightWidth}px`);
+fitPanelWidths();
+window.addEventListener('resize', fitPanelWidths);
 dom.zoom.value = String(state.tileSize);
 applyTheme(getStoredTheme(), false);
 
@@ -466,6 +475,27 @@ function replacePathPrefix(candidatePath, oldPath, newPath) {
   return newPath + candidatePath.slice(oldPath.length);
 }
 
+const whiteboard = new Whiteboard(document.querySelector('#right-panel'), {
+  error: (error) => showToast(`Board: ${formatError(error)}`, 'error'),
+  showPanel: () => { togglePanel('right', true); updatePreviewShortcut(); },
+  closed: () => {
+    if (state.selected && !isBoardFile(state.selected)) {
+      if (state.previewHistoryEnabled) renderPreviewHistory(); else void renderPreview(state.selected);
+    } else renderEmptyPreview();
+  },
+  openFile: (item) => void openInDefaultApp(item),
+  directoryFor: parentPath,
+  autosaveEnabled: () => state.boardAutosave,
+  hideFileMenu: hideFileContextMenu,
+  draggedPaths: () => (state.draggedItems.length ? state.draggedItems : state.draggedItem ? [state.draggedItem] : []).map((item) => item.path),
+  cancelExternalDrag: cancelReturnedExternalDrag,
+  resetDrag: resetFileDragState
+});
+
+function isBoardFile(item) {
+  return item?.kind === 'file' && /\.board$/i.test(item.name || '');
+}
+
 function isTextFile(item) {
   return item?.kind === 'file' && /\.(txt|md)$/i.test(item.name || '');
 }
@@ -614,7 +644,7 @@ function createFavoriteRow(entry) {
   row.title = entry.path;
   const icon = document.createElement('span');
   icon.className = 'tree-icon';
-  icon.innerHTML = isTextFile(entry) ? ICONS.text : (ICONS[entry.kind] || ICONS.file);
+  icon.innerHTML = isBoardFile(entry) ? ICONS.board : isTextFile(entry) ? ICONS.text : (ICONS[entry.kind] || ICONS.file);
   const name = document.createElement('span');
   name.className = 'tree-name';
   name.textContent = entry.name;
@@ -659,7 +689,7 @@ function createTreeNode(entry, depth, expanded = false) {
 
   const icon = document.createElement('span');
   icon.className = 'tree-icon';
-  icon.innerHTML = isTextFile(entry) ? ICONS.text : (ICONS[entry.kind] || ICONS.image);
+  icon.innerHTML = isBoardFile(entry) ? ICONS.board : isTextFile(entry) ? ICONS.text : (ICONS[entry.kind] || ICONS.image);
 
   const name = document.createElement('span');
   name.className = 'tree-name';
@@ -752,7 +782,7 @@ function bindEntryDrag(element, entry) {
     state.draggedItem = items[0];
     element.classList.add('dragging');
     document.body.classList.add('file-dragging');
-    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.effectAllowed = 'copyMove';
     event.dataTransfer.setData('application/x-lumina-paths', JSON.stringify(items.map((item) => item.path)));
     event.dataTransfer.setData('text/plain', items.map((item) => item.path).join('\n'));
   });
@@ -900,7 +930,7 @@ function itemWithPath(item, nextPath) {
   };
 }
 
-function remapTrackedItems(oldPath, newPath, exactItem) {
+async function remapTrackedItems(oldPath, newPath, exactItem) {
   const remap = (entry) => {
     if (!isPathWithinDirectory(entry.path, oldPath)) return entry;
     const nextEntryPath = replacePathPrefix(entry.path, oldPath, newPath);
@@ -909,6 +939,7 @@ function remapTrackedItems(oldPath, newPath, exactItem) {
   state.previewHistory = state.previewHistory.map(remap);
   state.favoriteItems = state.favoriteItems.map(remap);
   persistFavorites();
+  await whiteboard.remapPaths(remap);
 }
 
 async function moveItemsToDirectory(items, destinationPath) {
@@ -918,6 +949,7 @@ async function moveItemsToDirectory(items, destinationPath) {
   const moved = [];
   const errors = [];
   try {
+    if (whiteboard.autoSave) await whiteboard.save();
     for (const item of uniqueItems) {
       try {
         const result = await window.lumina.moveItem(item.path, destinationPath, state.currentDirectory);
@@ -936,7 +968,7 @@ async function moveItemsToDirectory(items, destinationPath) {
       movedByOldPath.set(item.path, next);
       state.preparedPaths.delete(item.path);
       state.warmedPaths.delete(item.path);
-      remapTrackedItems(item.path, next.path, next);
+      await remapTrackedItems(item.path, next.path, next);
       if (item.kind === 'directory' && isPathWithinDirectory(state.currentDirectory, item.path)) {
         state.currentDirectory = replacePathPrefix(state.currentDirectory, item.path, next.path);
         state.root = rootForPath(state.currentDirectory) || state.root;
@@ -1352,7 +1384,7 @@ function createMediaCard(item) {
   } else if (item.kind === 'file') {
     mediaElement = document.createElement('div');
     mediaElement.className = 'file-card-visual';
-    mediaElement.innerHTML = `<span class="file-card-icon">${ICONS.file}</span>`;
+    mediaElement.innerHTML = `<span class="file-card-icon">${isBoardFile(item) ? ICONS.board : ICONS.file}</span>`;
     card.classList.remove('loading-media');
   } else if (useThumbnail) {
     mediaElement = document.createElement('img');
@@ -1392,8 +1424,8 @@ function createMediaCard(item) {
 
   const badge = document.createElement('span');
   badge.className = 'media-badge';
-  const badgeIcon = textFile ? ICONS.text : ICONS[item.kind];
-  const badgeLabel = textFile ? (/\.md$/i.test(item.name) ? 'Markdown' : 'Текст') : MEDIA_LABELS[item.kind];
+  const badgeIcon = isBoardFile(item) ? ICONS.board : textFile ? ICONS.text : ICONS[item.kind];
+  const badgeLabel = isBoardFile(item) ? 'Board' : textFile ? (/\.md$/i.test(item.name) ? 'Markdown' : 'Текст') : MEDIA_LABELS[item.kind];
   badge.innerHTML = `${badgeIcon}<span>${badgeLabel}</span>`;
 
   const remove = document.createElement('button');
@@ -1445,6 +1477,8 @@ function selectMedia(item, options = {}) {
 function setActiveMedia(item, options = {}, recordHistory = true) {
   state.selected = item;
   updateSelectionClasses();
+  if (isBoardFile(item)) { void whiteboard.open(item); return; }
+  if (whiteboard.current) return;
   if (state.previewHistoryEnabled) {
     if (recordHistory) {
       state.previewHistory = [item, ...state.previewHistory.filter((entry) => entry.path !== item.path)]
@@ -1503,6 +1537,7 @@ function updateSelectionClasses() {
 }
 
 function renderEmptyPreview() {
+  if (whiteboard.current) return;
   if (state.previewHistoryEnabled && state.previewHistory.length) {
     renderPreviewHistory();
     updateSelectionClasses();
@@ -1566,6 +1601,7 @@ function togglePreviewPlayback(media) {
 }
 
 function previewShortcutAvailable() {
+  if (whiteboard.current) return false;
   const active = document.activeElement;
   const isEditing = active?.matches('input, textarea, select') || active?.isContentEditable;
   const modalOpen = [dom.deleteModal, dom.nameModal, dom.settingsModal]
@@ -1641,6 +1677,7 @@ function createHistoryPreviewItem(item, index, options = {}) {
 }
 
 function renderPreviewHistory(options = {}) {
+  if (whiteboard.current) return;
   dom.preview.classList.add('history-mode');
   const list = document.createElement('div');
   list.className = 'preview-history-list';
@@ -1682,6 +1719,8 @@ function playNextInQueue(item) {
 }
 
 async function renderPreview(item, options = {}) {
+  if (isBoardFile(item)) { void whiteboard.open(item); return; }
+  if (whiteboard.current) return;
   dom.preview.classList.remove('history-mode');
   const active = document.createElement('div');
   active.className = 'preview-active';
@@ -1889,6 +1928,38 @@ async function openInDefaultApp(item) {
   }
 }
 
+async function closeBoardWithin(items) {
+  if (whiteboard.current && items.some((item) => isPathWithinDirectory(whiteboard.current.path, item.path))) {
+    await whiteboard.close();
+    return !whiteboard.current;
+  }
+  return true;
+}
+
+async function copyItems(item) {
+  if (!item || isLibraryRootPath(item.path)) return;
+  try {
+    if (whiteboard.autoSave) await whiteboard.save();
+    const selected = state.selectedPaths.has(item.path) ? selectedMediaItems() : [];
+    const count = await window.lumina.copyItems((selected.length ? selected : [item]).map((entry) => entry.path));
+    state.hasCopiedItems = true;
+    showToast(`Скопировано: ${count}. Выберите папку и нажмите «Вставить» или Ctrl+V.`);
+  } catch (error) { showToast(`Не удалось скопировать: ${formatError(error)}`, 'error'); }
+}
+
+async function pasteItems(directoryPath) {
+  if (!state.hasCopiedItems || state.moveInProgress) return;
+  state.moveInProgress = true;
+  try {
+    const result = await window.lumina.pasteItems(directoryPath);
+    await refreshTreeDirectory(directoryPath);
+    await loadMedia({ quiet: true });
+    if (result.copied.length) showToast(`Создано копий: ${result.copied.length}`);
+    if (result.errors.length) showToast(`Ошибок копирования: ${result.errors.length}. ${result.errors[0].message}`, 'error');
+  } catch (error) { showToast(`Не удалось вставить: ${formatError(error)}`, 'error'); }
+  finally { state.moveInProgress = false; }
+}
+
 function hideFileContextMenu() {
   dom.contextMenu.classList.add('hidden');
   state.contextItem = null;
@@ -1905,6 +1976,8 @@ function showFileContextMenu(event, item) {
   state.contextItem = item;
   const isRoot = isLibraryRootPath(item.path);
   dom.contextRename.disabled = isRoot;
+  dom.contextCopy.disabled = isRoot;
+  dom.contextPaste.disabled = !state.hasCopiedItems;
   dom.contextDelete.disabled = false;
   dom.contextDetachRoot.classList.toggle('hidden', !isRoot);
   const loops = state.loopVideoPaths.has(item.path);
@@ -1931,11 +2004,12 @@ function openNameModal(mode, item) {
   if (!item) return;
   state.nameAction = { mode, item };
   const isRename = mode === 'rename';
-  dom.nameTitle.textContent = isRename ? 'Переименовать' : 'Создать новую папку';
+  const isBoard = mode === 'create-board';
+  dom.nameTitle.textContent = isRename ? 'Переименовать' : isBoard ? 'Создать board' : 'Создать новую папку';
   dom.nameDescription.textContent = isRename
     ? `Введите новое имя для «${item.name}».`
-    : `Папка будет создана в «${item.kind === 'directory' ? item.name : fileName(parentPath(item.path))}».`;
-  dom.nameInput.value = isRename ? item.name : 'Новая папка';
+    : `${isBoard ? 'Board' : 'Папка'} будет создана в «${item.kind === 'directory' ? item.name : fileName(parentPath(item.path))}».`;
+  dom.nameInput.value = isRename ? item.name : isBoard ? 'Новая доска' : 'Новая папка';
   dom.nameSubmit.textContent = isRename ? 'Переименовать' : 'Создать';
   dom.nameModal.classList.remove('hidden');
   dom.nameInput.focus();
@@ -1959,6 +2033,16 @@ async function submitNameAction(event) {
   if (!action || !dom.nameInput.value.trim()) return;
   dom.nameSubmit.disabled = true;
   try {
+    if (action.mode === 'create-board') {
+      const directoryPath = action.item.kind === 'directory' ? action.item.path : parentPath(action.item.path);
+      const created = await window.lumina.createBoard(directoryPath, dom.nameInput.value.trim());
+      closeNameModal();
+      await refreshTreeDirectory(directoryPath);
+      await loadMedia({ quiet: true });
+      selectMedia(created);
+      showToast(`Board «${created.name}» создан`);
+      return;
+    }
     if (action.mode === 'create-folder') {
       const directoryPath = action.item.kind === 'directory' ? action.item.path : parentPath(action.item.path);
       const created = await window.lumina.createFolder(directoryPath, dom.nameInput.value);
@@ -1969,6 +2053,7 @@ async function submitNameAction(event) {
     }
 
     const oldPath = action.item.path;
+    if (whiteboard.autoSave) await whiteboard.save();
     const selectedPath = state.selected?.path;
     const selectedPaths = [...state.selectedPaths];
     const result = await window.lumina.renameItem(oldPath, dom.nameInput.value);
@@ -1987,7 +2072,7 @@ async function submitNameAction(event) {
     state.selectionAnchorPath = state.selectionAnchorPath && isPathWithinDirectory(state.selectionAnchorPath, oldPath)
       ? replacePathPrefix(state.selectionAnchorPath, oldPath, result.path)
       : state.selectionAnchorPath;
-    remapTrackedItems(oldPath, result.path, {
+    await remapTrackedItems(oldPath, result.path, {
       ...itemWithPath(action.item, result.path),
       name: result.name,
     });
@@ -2106,6 +2191,7 @@ async function applyRootsAfterRemoval(nextRoots, removedPath, removeFavorites) {
 async function detachRoot(item) {
   if (!item || !isLibraryRootPath(item.path)) return;
   try {
+    if (!await closeBoardWithin([item])) return;
     const roots = await window.lumina.detachRoot(item.path);
     await applyRootsAfterRemoval(roots, item.path, false);
     showToast(`Папка «${item.name}» откреплена. Файлы не удалены.`);
@@ -2117,6 +2203,7 @@ async function detachRoot(item) {
 async function deleteItems(items, fromModal = false) {
   const uniqueItems = [...new Map((items || []).filter(Boolean).map((item) => [item.path, item])).values()];
   if (!uniqueItems.length || uniqueItems.some((item) => state.deletingPaths.has(item.path))) return;
+  if (!await closeBoardWithin(uniqueItems)) return;
   uniqueItems.forEach((item) => state.deletingPaths.add(item.path));
   if (fromModal) {
     dom.deleteConfirm.disabled = true;
@@ -2185,11 +2272,32 @@ async function confirmDelete() {
   await deleteItems(state.pendingDelete, true);
 }
 
+function panelMaxWidth(side) {
+  const other = side === 'left' ? 'right' : 'left';
+  const otherVisible = !dom.workspace.classList.contains(`${other}-hidden`);
+  const available = dom.workspace.clientWidth - 360 - 5
+    - (otherVisible ? state[`${other}Width`] + 5 : 0);
+  return side === 'left' ? Math.max(180, Math.min(520, available)) : Math.max(260, available);
+}
+
+function fitPanelWidths() {
+  const leftVisible = !dom.workspace.classList.contains('left-hidden');
+  const rightVisible = !dom.workspace.classList.contains('right-hidden');
+  if (leftVisible) {
+    const available = dom.workspace.clientWidth - 360 - 5 - (rightVisible ? 265 : 0);
+    state.leftWidth = Math.max(180, Math.min(520, available, state.leftWidth));
+  }
+  if (rightVisible) state.rightWidth = Math.max(260, Math.min(panelMaxWidth('right'), state.rightWidth));
+  document.documentElement.style.setProperty('--left-width', `${state.leftWidth}px`);
+  document.documentElement.style.setProperty('--right-width', `${state.rightWidth}px`);
+}
+
 function togglePanel(side, visible) {
   const className = `${side}-hidden`;
   const shouldHide = visible === undefined ? !dom.workspace.classList.contains(className) : !visible;
   dom.workspace.classList.toggle(className, shouldHide);
   dom[`${side}Restore`].classList.toggle('hidden', !shouldHide);
+  fitPanelWidths();
 }
 
 function bindResizer(element, side) {
@@ -2206,27 +2314,33 @@ function bindResizer(element, side) {
       const delta = moveEvent.clientX - startX;
       const next = side === 'left' ? startWidth + delta : startWidth - delta;
       const min = side === 'left' ? 180 : 260;
-      const max = side === 'left' ? 520 : 600;
+      const max = panelMaxWidth(side);
       const width = Math.min(max, Math.max(min, next));
       state[`${side}Width`] = width;
       document.documentElement.style.setProperty(`--${side}-width`, `${width}px`);
     };
-    const onUp = () => {
+    const onUp = (upEvent) => {
+      if (upEvent.type === 'pointerup') onMove(upEvent);
       element.classList.remove('dragging');
       document.body.classList.remove('resizing');
       element.removeEventListener('pointermove', onMove);
       element.removeEventListener('pointerup', onUp);
+      element.removeEventListener('pointercancel', onUp);
+      element.removeEventListener('lostpointercapture', onUp);
+      if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
       localStorage.setItem(`lumina:${side}-width`, String(state[`${side}Width`]));
     };
     element.addEventListener('pointermove', onMove);
     element.addEventListener('pointerup', onUp);
+    element.addEventListener('pointercancel', onUp);
+    element.addEventListener('lostpointercapture', onUp);
   });
 
   element.addEventListener('dblclick', () => {
     const width = side === 'left' ? 280 : 360;
     state[`${side}Width`] = width;
-    document.documentElement.style.setProperty(`--${side}-width`, `${width}px`);
-    localStorage.setItem(`lumina:${side}-width`, String(width));
+    fitPanelWidths();
+    localStorage.setItem(`lumina:${side}-width`, String(state[`${side}Width`]));
   });
 }
 
@@ -2277,6 +2391,11 @@ dom.queueAutoplayToggle.addEventListener('change', () => {
 dom.restoreSessionToggle.addEventListener('change', () => {
   state.restoreSession = dom.restoreSessionToggle.checked;
   persistSession();
+});
+dom.boardAutosaveToggle.addEventListener('change', () => {
+  state.boardAutosave = dom.boardAutosaveToggle.checked;
+  localStorage.setItem('lumina:board-autosave', String(state.boardAutosave));
+  whiteboard.autosavePreferenceChanged();
 });
 dom.previewSoundToggle.addEventListener('change', () => {
   state.previewSoundEnabled = dom.previewSoundToggle.checked;
@@ -2342,6 +2461,23 @@ dom.contextRename.addEventListener('click', () => {
   hideFileContextMenu();
   if (item) openNameModal('rename', item);
 });
+dom.contextCopy.addEventListener('click', () => {
+  const item = state.contextItem; hideFileContextMenu();
+  if (item) void copyItems(item);
+});
+dom.contextPaste.addEventListener('click', () => {
+  const item = state.contextItem; hideFileContextMenu();
+  if (item) void pasteItems(item.kind === 'directory' ? item.path : parentPath(item.path));
+});
+dom.contextCreateBoard.addEventListener('click', () => {
+  const item = state.contextItem; hideFileContextMenu();
+  if (item) openNameModal('create-board', item);
+});
+dom.tree.addEventListener('contextmenu', (event) => {
+  if (event.target.closest('.tree-row')) return;
+  const directoryPath = state.currentDirectory || state.roots[0]?.path;
+  if (directoryPath) showFileContextMenu(event, { path: directoryPath, name: fileName(directoryPath), kind: 'directory' });
+});
 dom.contextCreateFolder.addEventListener('click', () => {
   const item = state.contextItem;
   hideFileContextMenu();
@@ -2399,6 +2535,7 @@ dom.confirmDeleteToggle.checked = state.confirmBeforeDelete;
 dom.queueAutoplayToggle.checked = state.queueAutoplay;
 dom.previewHistoryToggle.checked = state.previewHistoryEnabled;
 dom.previewSoundToggle.checked = state.previewSoundEnabled;
+dom.boardAutosaveToggle.checked = state.boardAutosave;
 syncMediaFilters();
 initCustomScrollbars();
 
@@ -2445,9 +2582,9 @@ dom.galleryScroll.addEventListener('scroll', () => {
 }, { passive: true });
 
 const galleryResizeObserver = new ResizeObserver(() => {
-  requestAnimationFrame(() => layoutVirtualGrid());
+  layoutVirtualGrid();
 });
-galleryResizeObserver.observe(document.querySelector('#gallery-panel'));
+galleryResizeObserver.observe(dom.galleryScroll);
 
 // Native media controls live in Chromium's shadow DOM. Route Space through
 // Electron so their focused buttons never receive the playback shortcut.
@@ -2467,6 +2604,12 @@ updatePreviewShortcut();
 
 window.addEventListener('keydown', (event) => {
   const tag = event.target.tagName;
+  if (event.ctrlKey && !event.altKey && !event.metaKey && (event.code === 'Space' || event.key === ' ') && whiteboard.current) {
+    event.preventDefault(); event.stopPropagation(); whiteboard.homeObjects(); return;
+  }
+  if (event.ctrlKey && (event.code === 'KeyS' || event.key.toLowerCase() === 's') && whiteboard.current) {
+    event.preventDefault(); event.stopPropagation(); void whiteboard.save().catch(() => {}); return;
+  }
   const isEditing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target.isContentEditable;
   if (event.key === 'Escape' && !dom.contextMenu.classList.contains('hidden')) {
     hideFileContextMenu();
@@ -2485,7 +2628,14 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (isEditing || !dom.deleteModal.classList.contains('hidden') || !dom.nameModal.classList.contains('hidden') || !dom.settingsModal.classList.contains('hidden')) return;
+  if (whiteboard.element.contains(event.target) || whiteboard.menu.contains(event.target)) return;
   if (tag === 'AUDIO' || tag === 'VIDEO') return;
+  if (event.ctrlKey && event.key.toLowerCase() === 'c' && state.selected) {
+    event.preventDefault(); void copyItems(state.selected); return;
+  }
+  if (event.ctrlKey && event.key.toLowerCase() === 'v' && state.currentDirectory) {
+    event.preventDefault(); void pasteItems(state.currentDirectory); return;
+  }
   if (event.ctrlKey && event.key.toLowerCase() === 'o') {
     event.preventDefault();
     openFolder();

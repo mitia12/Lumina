@@ -7,7 +7,7 @@ const fixture = process.argv.at(-2);
 const phase = process.argv.at(-1);
 app.setPath('userData', path.join(fixture, 'user-data'));
 app.commandLine.appendSwitch('disable-background-timer-throttling');
-require('../electron/main.cjs');
+require(process.env.LUMINA_TEST_APP_MAIN || '../electron/main.cjs');
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function test() {
@@ -25,7 +25,7 @@ async function test() {
   assert(await evaluate('state.sessionReady'), 'Startup completed');
   const errors = [];
   window.webContents.on('console-message', (_event, _level, message) => {
-    if (message.startsWith('Uncaught')) errors.push(message);
+    if (message.startsWith('Uncaught')) { errors.push(message); console.error(message); }
   });
   const first = path.join(fixture, 'first');
   const nested = path.join(first, 'Nested');
@@ -49,6 +49,12 @@ async function test() {
       video.pause();
       video.scrollIntoView();
     })()`);
+    const hoverPoint = await evaluate(`(() => {
+      const rect = dom.preview.querySelector('video').getBoundingClientRect();
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+    })()`);
+    window.webContents.sendInputEvent({ type: 'mouseMove', ...hoverPoint });
+    await delay(150);
     const { root } = await debuggerClient.sendCommand('DOM.getDocument', { depth: -1, pierce: true });
     const flatten = (node) => [node, ...[...(node.children || []), ...(node.shadowRoots || [])].flatMap(flatten)];
     const video = flatten(root).find(node => node.nodeName === 'VIDEO' && node.attributes?.includes('data-path'));
@@ -172,6 +178,27 @@ async function test() {
     fs.mkdirSync(screenshotDirectory, { recursive: true });
     await window.webContents.capturePage().then((image) => fs.writeFileSync(path.join(screenshotDirectory, `settings-${require('../package.json').version}-${process.platform}.png`), image.toPNG()));
     assert.equal(await evaluate('dom.restoreSessionToggle.checked'), true);
+  } else if (phase === 'board') {
+    await evaluate(`selectDirectory(${JSON.stringify(first)})`);
+    await require('./whiteboard-smoke.cjs')(window, first, nested);
+  } else if (phase === 'panels' || phase === 'panels-restore') {
+    await evaluate(`selectDirectory(${JSON.stringify(first)})`);
+    await require('./panel-resize-smoke.cjs')(window, phase === 'panels-restore');
+    if (phase === 'panels') {
+      const screenshotDirectory = path.join(__dirname, '..', 'release');
+      fs.mkdirSync(screenshotDirectory, { recursive: true });
+      window.showInactive();
+      await delay(150);
+      const image = await window.webContents.capturePage();
+      fs.writeFileSync(path.join(screenshotDirectory, `panel-layout-${require('../package.json').version}-${process.platform}.png`), image.toPNG());
+      window.hide();
+    }
+  } else if (phase === 'board-interactions') {
+    await evaluate(`selectDirectory(${JSON.stringify(first)})`);
+    await require('./whiteboard-interactions.cjs')(window, first);
+  } else if (phase === 'board-navigation') {
+    await evaluate(`selectDirectory(${JSON.stringify(first)})`);
+    await require('./whiteboard-navigation.cjs')(window, first);
   } else if (phase === 'restore') {
     assert.equal(await evaluate('state.roots.length'), 2, 'All roots restored');
     assert.equal(await evaluate('state.currentDirectory'), deep, 'Current nested folder restored');

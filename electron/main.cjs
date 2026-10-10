@@ -1,4 +1,5 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, shell, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, shell, nativeImage, clipboard } = require('electron');
+const { registerWorkspaceActions } = require('./workspace-actions.cjs');
 const { promises: fs, watch, createReadStream, constants: fsConstants } = require('node:fs');
 const { writeFileSync, renameSync } = require('node:fs');
 const { Readable } = require('node:stream');
@@ -942,6 +943,7 @@ app.whenReady().then(async () => {
     }
     return { name: folderName, path: folderPath, kind: 'directory' };
   });
+  registerWorkspaceActions({ ipcMain, clipboard, requireSafePath, validateEntryName, serializeEntry, isPathInside });
   ipcMain.handle('text:read', async (_event, itemPath) => {
     const safePath = requireTextPath(itemPath);
     const stat = await fs.stat(safePath);
