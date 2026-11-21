@@ -2,8 +2,9 @@ const { promises: fs, constants } = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { MAX_BOARD_SIZE, validateBoard } = require('./board.cjs');
+const { copyFilesToClipboard } = require('./file-clipboard.cjs');
 
-function registerWorkspaceActions({ ipcMain, clipboard, requireSafePath, validateEntryName, serializeEntry, isPathInside }) {
+function registerWorkspaceActions({ ipcMain, requireSafePath, validateEntryName, serializeEntry, isPathInside }) {
   let copiedPaths = [];
   const entry = async (itemPath) => {
     const stat = await fs.stat(itemPath);
@@ -80,9 +81,15 @@ function registerWorkspaceActions({ ipcMain, clipboard, requireSafePath, validat
     if (!Array.isArray(values) || !values.length || values.length > 1000) throw new Error('Выберите файлы для копирования.');
     const nextPaths = [...new Set(values.map(requireSafePath))];
     await Promise.all(nextPaths.map((value) => fs.access(value)));
+    let external = false;
+    let clipboardError = null;
+    try {
+      external = await copyFilesToClipboard(nextPaths);
+    } catch (error) {
+      clipboardError = error.message || String(error);
+    }
     copiedPaths = nextPaths;
-    clipboard.writeText(copiedPaths.join('\n'));
-    return copiedPaths.length;
+    return { count: copiedPaths.length, external, error: clipboardError };
   });
   ipcMain.handle('item:paste', async (_event, value) => {
     const destination = requireSafePath(value);

@@ -1,6 +1,7 @@
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const assert = require('node:assert/strict');
 
 const fixture = process.argv.at(-2);
@@ -92,6 +93,14 @@ async function test() {
       assert.equal(thumbnail.jpeg, true, `Valid JPEG thumbnail: ${thumbnail.name}`);
     }
     assert.equal(await evaluate('[...expandedTreePaths()].some(item => /\.(webm|wav|txt)$/.test(item))'), false, 'Only folders are saved as expanded');
+    if (process.platform === 'win32') {
+      await evaluate(`copyItems(state.media.find(item => item.name === 'photo.png'))`);
+      const dropped = execFileSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-STA', '-Command',
+        'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetFileDropList()'
+      ], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+      assert(dropped.includes('photo.png'), 'Copied file is placed on the system clipboard');
+    }
     await evaluate(`(async () => {
       dom.previewHistoryToggle.checked = true;
       dom.previewHistoryToggle.dispatchEvent(new Event('change'));

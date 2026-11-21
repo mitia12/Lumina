@@ -1941,9 +1941,14 @@ async function copyItems(item) {
   try {
     if (whiteboard.autoSave) await whiteboard.save();
     const selected = state.selectedPaths.has(item.path) ? selectedMediaItems() : [];
-    const count = await window.lumina.copyItems((selected.length ? selected : [item]).map((entry) => entry.path));
+    const result = await window.lumina.copyItems((selected.length ? selected : [item]).map((entry) => entry.path));
     state.hasCopiedItems = true;
-    showToast(`Скопировано: ${count}. Выберите папку и нажмите «Вставить» или Ctrl+V.`);
+    const copiedCount = typeof result === 'number' ? result : result.count;
+    if (typeof result === 'object' && !result.external) {
+      showToast(`Скопировано: ${copiedCount}. Не удалось поместить файлы в системный буфер обмена, вставка доступна внутри Lumina.`, 'error');
+    } else {
+      showToast(`Скопировано: ${copiedCount}. Вставьте в Lumina или в другое приложение.`);
+    }
   } catch (error) { showToast(`Не удалось скопировать: ${formatError(error)}`, 'error'); }
 }
 
